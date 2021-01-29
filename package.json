@@ -1,0 +1,29 @@
+{
+  "name": "dns",
+  "version": "1.0.0",
+  "author": {
+    "name": "Nolan Woods",
+    "url": "https://i2labs.ca"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/innovate-invent/dns.git"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/"
+  ],
+  "scripts": {
+    "prebuild": "npm run lint",
+    "build": "tsc",
+    "lint": "tslint src/*.ts",
+    "prepare": "npm run build",
+    "clean": "rm -r **/*.js **/*.js.map"
+  },
+  "dependencies": {
+    "typescript": "^4.1.3",
+    "tslint": "^6.1.3"
+  }
+}

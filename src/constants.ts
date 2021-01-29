@@ -61,7 +61,7 @@ export enum RecordType {
     'OPENPGPKEY' = 61,    // OpenPGP Key     [RFC7929]     OPENPGPKEY/openpgpkey-completed-template     2014-08-12
     'CSYNC' = 62,    // Child-To-Parent Synchronization     [RFC7477]         2015-01-27
     'ZONEMD' = 63,    // message digest for DNS zone     [draft-wessels-dns-zone-digest]     ZONEMD/zonemd-completed-template     2018-12-12
-    //'Unassigned2' = 64-98,    // SPF     99         [RFC7208]
+    // 'Unassigned2' = 64-98,    // SPF     99         [RFC7208]
     'UINFO' = 100,    // [IANA-Reserved]
     'UID' = 101,    // [IANA-Reserved]
     'GID' = 102,    // [IANA-Reserved]
@@ -72,7 +72,7 @@ export enum RecordType {
     'LP' = 107,    // [RFC6742]     ILNP/lp-completed-template
     'EUI48' = 108,    // an EUI-48 address     [RFC7043]     EUI48/eui48-completed-template     2013-03-27
     'EUI64' = 109,    // an EUI-64 address     [RFC7043]     EUI64/eui64-completed-template     2013-03-27
-    //'Unassigned3' = 110-248,    // TKEY     249     Transaction Key     [RFC2930]
+    // 'Unassigned3' = 110-248,    // TKEY     249     Transaction Key     [RFC2930]
     'TSIG' = 250,    // Transaction Signature     [RFC2845]
     'IXFR' = 251,    // incremental transfer     [RFC1995]
     'AXFR' = 252,    // transfer of an entire zone     [RFC1035][RFC5936]
@@ -84,9 +84,9 @@ export enum RecordType {
     'AVC' = 258,    // Application Visibility and Control     [Wolfgang_Riedel]     AVC/avc-completed-template     2016-02-26
     'DOA' = 259,    // Digital Object Architecture     [draft-durand-doa-over-dns]     DOA/doa-completed-template     2017-08-30
     'AMTRELAY' = 260,    // Automatic Multicast Tunneling Relay     [RFC-ietf-mboned-driad-amt-discovery-13]     AMTRELAY/amtrelay-completed-template     2019-02-06
-    //'Unassigned4' = 261-32767,    // TA     32768     DNSSEC Trust Authorities     [Sam_Weiler][http://cameo.library.cmu.edu/][ Deploying DNSSEC Without a Signed Root. Technical Report 1999-19, Information Networking Institute, Carnegie Mellon University, April 2004.]         2005-12-13
+    // 'Unassigned4' = 261-32767,    // TA     32768     DNSSEC Trust Authorities     [Sam_Weiler][http://cameo.library.cmu.edu/][ Deploying DNSSEC Without a Signed Root. Technical Report 1999-19, Information Networking Institute, Carnegie Mellon University, April 2004.]         2005-12-13
     'DLV' = 32769,    // DNSSEC Lookaside Validation (OBSOLETE)     [RFC-ietf-dnsop-obsolete-dlv-02][RFC4431]
-    //'Unassigned5' = 32770-65279,    // Private use     65280-65534
+    // 'Unassigned5' = 32770-65279,    // Private use     65280-65534
     'Reserved' = 65535,
 }
 

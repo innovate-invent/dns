@@ -81,31 +81,22 @@ export class DNSError extends Error {
     }
 }
 
-export interface LookupCallback {
-    (err: DNSError | undefined, address: string, family: number): void;
-}
-
-export interface LookupCallbackAll {
-    (err: DNSError | undefined, addresses: { address: string, family: number }[]): void;
-}
+export type LookupCallback = (err: DNSError | undefined, address: string, family: number) => void;
+export type LookupCallbackAll = (err: DNSError | undefined, addresses: { address: string, family: number }[]) => void;
 
 export interface Resolver {
-    constructor(options?: { timeout: number }): Resolver;
+    // constructor(options?: { timeout: number });
     cancel(): void;
     setLocalAddress(ipv4: string, ipv6: string): void;
     getServers(): string[];
     setServers(servers: string[]): void;
 
     resolve(hostname: string, callback: (err?: DNSError, records?: string[]) => void): void;
-    resolve(hostname: string, rrtype: 'A', callback: (err?: DNSError, records?: string[]) => void): void;
-    resolve(hostname: string, rrtype: 'AAAA', callback: (err?: DNSError, records?: string[]) => void): void;
+    resolve(hostname: string, rrtype: "A"|"AAAA"|"CNAME"|"NS"|"PTR", callback: (err?: DNSError, records?: string[]) => void): void;
     resolve(hostname: string, rrtype: 'ANY', callback: (err?: DNSError, records?: DNSRecord[]) => void): void;
     resolve(hostname: string, rrtype: 'CAA', callback: (err?: DNSError, records?: {critical: number, iodef?: string, issue?: string}[]) => void): void;
-    resolve(hostname: string, rrtype: 'CNAME', callback: (err?: DNSError, records?: string[]) => void): void;
     resolve(hostname: string, rrtype: 'MX', callback: (err?: DNSError, records?: {priority: number, exchange: string}[]) => void): void;
     resolve(hostname: string, rrtype: 'NAPTR', callback: (err?: DNSError, records?: NAPTRRecord[]) => void): void;
-    resolve(hostname: string, rrtype: 'NS', callback: (err?: DNSError, records?: string[]) => void): void;
-    resolve(hostname: string, rrtype: 'PTR', callback: (err?: DNSError, records?: string[]) => void): void;
     resolve(hostname: string, rrtype: 'SOA', callback: (err?: DNSError, records?: SOARecord) => void): void;
     resolve(hostname: string, rrtype: 'SRV', callback: (err?: DNSError, records?: SRVRecord) => void): void;
     resolve(hostname: string, rrtype: 'TXT', callback: (err?: DNSError, records?: string[][]) => void): void;
@@ -131,47 +122,38 @@ export interface Resolver {
     reverse(hostname: string, callback: (err?: DNSError, hostnames?: string[]) => void): void;
 }
 
-export namespace promises {
-    export interface Resolver { //TODO abstract class, move in most of CFResolver
-        constructor(options?: { timeout: number }): Resolver;
-        cancel(): void;
-        setLocalAddress(ipv4: string, ipv6: string): void;
-        getServers(): string[];
-        setServers(servers: string[]): void;
+export interface PromiseResolver {
+    // constructor(options?: { timeout: number }): Resolver;
+    cancel(): void;
+    setLocalAddress(ipv4: string, ipv6: string): void;
+    getServers(): string[];
+    setServers(servers: string[]): void;
 
-        resolve(hostname: string): Promise<string[]>;
-        resolve(hostname: string, rrtype: 'A'): Promise<string[]>;
-        resolve(hostname: string, rrtype: 'AAAA'): Promise<string[]>;
-        resolve(hostname: string, rrtype: 'ANY'): Promise<DNSRecord[]>;
-        resolve(hostname: string, rrtype: 'CAA'): Promise<{critical: number, iodef?: string, issue?: string}[]>;
-        resolve(hostname: string, rrtype: 'CNAME'): Promise<string[]>;
-        resolve(hostname: string, rrtype: 'MX'): Promise<{priority: number, exchange: string}[]>;
-        resolve(hostname: string, rrtype: 'NAPTR'): Promise<NAPTRRecord[]>;
-        resolve(hostname: string, rrtype: 'NS'): Promise<string[]>;
-        resolve(hostname: string, rrtype: 'PTR'): Promise<string[]>;
-        resolve(hostname: string, rrtype: 'SOA'): Promise<SOARecord>;
-        resolve(hostname: string, rrtype: 'SRV'): Promise<SRVRecord>;
-        resolve(hostname: string, rrtype: 'TXT'): Promise<string[][]>;
+    resolve(hostname: string, rrtype?: "A"|"AAAA"|"CNAME"|"NS"|"PTR"): Promise<string[]>;
+    resolve(hostname: string, rrtype: 'ANY'): Promise<DNSRecord[]>;
+    resolve(hostname: string, rrtype: 'CAA'): Promise<{critical: number, iodef?: string, issue?: string}[]>;
+    resolve(hostname: string, rrtype: 'MX'): Promise<{priority: number, exchange: string}[]>;
+    resolve(hostname: string, rrtype: 'NAPTR'): Promise<NAPTRRecord[]>;
+    resolve(hostname: string, rrtype: 'SOA'): Promise<SOARecord>;
+    resolve(hostname: string, rrtype: 'SRV'): Promise<SRVRecord>;
+    resolve(hostname: string, rrtype: 'TXT'): Promise<string[][]>;
 
-        resolve4(hostname: string): Promise<string[]>;
-        resolve4(hostname: string, options: { ttl: true }): Promise<ARecord[]>;
-        resolve4(hostname: string, options: { ttl: false }): Promise<string[]>;
+    resolve4(hostname: string, options: { ttl: true }): Promise<ARecord[]>;
+    resolve4(hostname: string, options?: { ttl: false }): Promise<string[]>;
 
-        resolve6(hostname: string): Promise<string[]>;
-        resolve6(hostname: string, options: { ttl: true }): Promise<AAAARecord[]>;
-        resolve6(hostname: string, options: { ttl: false }): Promise<string[]>;
+    resolve6(hostname: string, options: { ttl: true }): Promise<AAAARecord[]>;
+    resolve6(hostname: string, options?: { ttl: false }): Promise<string[]>;
 
-        resolveAny(hostname: string): Promise<DNSRecord[]>;
-        resolveCaa(hostname: string): Promise<{critical: number, iodef?: string, issue?: string}[]>;
-        resolveCname(hostname: string): Promise<string[]>;
-        resolveMx(hostname: string): Promise<{priority: number, exchange: string}[]>;
-        resolveNaptr(hostname: string): Promise<NAPTRRecord[]>;
-        resolveNs(hostname: string): Promise<string[]>;
-        resolvePtr(hostname: string): Promise<string[]>;
-        resolveSoa(hostname: string): Promise<SOARecord>;
-        resolveSrv(hostname: string): Promise<SRVRecord>;
-        resolveTxt(hostname: string): Promise<string[][]>;
+    resolveAny(hostname: string): Promise<DNSRecord[]>;
+    resolveCaa(hostname: string): Promise<{critical: number, iodef?: string, issue?: string}[]>;
+    resolveCname(hostname: string): Promise<string[]>;
+    resolveMx(hostname: string): Promise<{priority: number, exchange: string}[]>;
+    resolveNaptr(hostname: string): Promise<NAPTRRecord[]>;
+    resolveNs(hostname: string): Promise<string[]>;
+    resolvePtr(hostname: string): Promise<string[]>;
+    resolveSoa(hostname: string): Promise<SOARecord>;
+    resolveSrv(hostname: string): Promise<SRVRecord>;
+    resolveTxt(hostname: string): Promise<string[][]>;
 
-        reverse(hostname: string): Promise<string[]>;
-    }
+    reverse(hostname: string): Promise<string[]>;
 }

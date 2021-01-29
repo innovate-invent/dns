@@ -1,6 +1,6 @@
 import {
-    Resolver as IResolver,
-    promises,
+    Resolver,
+    PromiseResolver,
     DNSRecord,
     NAPTRRecord,
     SOARecord,
@@ -13,11 +13,17 @@ import CFResolver from './cloudflare'
 import * as constants from './constants'
 
 
-class Resolver implements IResolver {
-    _resolver: promises.Resolver;
+class CallbackResolver implements Resolver {
+    _resolver: PromiseResolver;
 
-    constructor(options: { timeout: number; }, baseType: IResolver = CFResolver) {
-        this._resolver = new baseType(options);
+    constructor(options?: { timeout: number; } | PromiseResolver) {
+        if ('timeout' in options) {
+            this._resolver = new CFResolver(options);
+        } else if (options === undefined) {
+            this._resolver = new CFResolver();
+        } else {
+            this._resolver = options;
+        }
     }
 
     cancel(): void {
@@ -29,15 +35,11 @@ class Resolver implements IResolver {
     }
 
     resolve(hostname: string, callback: (err?: DNSError, records?: string[]) => void): void;
-    resolve(hostname: string, rrtype: "A", callback: (err?: DNSError, records?: string[]) => void): void;
-    resolve(hostname: string, rrtype: "AAAA", callback: (err?: DNSError, records?: string[]) => void): void;
+    resolve(hostname: string, rrtype: "A"|"AAAA"|"CNAME"|"NS"|"PTR", callback: (err?: DNSError, records?: string[]) => void): void;
     resolve(hostname: string, rrtype: "ANY", callback: (err?: DNSError, records?: DNSRecord[]) => void): void;
     resolve(hostname: string, rrtype: "CAA", callback: (err?: DNSError, records?: { critical: number; iodef?: string; issue?: string }[]) => void): void;
-    resolve(hostname: string, rrtype: "CNAME", callback: (err?: DNSError, records?: string[]) => void): void;
     resolve(hostname: string, rrtype: "MX", callback: (err?: DNSError, records?: { priority: number; exchange: string }[]) => void): void;
     resolve(hostname: string, rrtype: "NAPTR", callback: (err?: DNSError, records?: NAPTRRecord[]) => void): void;
-    resolve(hostname: string, rrtype: "NS", callback: (err?: DNSError, records?: string[]) => void): void;
-    resolve(hostname: string, rrtype: "PTR", callback: (err?: DNSError, records?: string[]) => void): void;
     resolve(hostname: string, rrtype: "SOA", callback: (err?: DNSError, records?: SOARecord) => void): void;
     resolve(hostname: string, rrtype: "SRV", callback: (err?: DNSError, records?: SRVRecord) => void): void;
     resolve(hostname: string, rrtype: "TXT", callback: (err?: DNSError, records?: string[][]) => void): void;
@@ -126,12 +128,12 @@ function lookupService(address: string, port: number, callback: (err?: DNSError,
     defaultPromiseResolver.lookupService(address, port).then(v=>callback(undefined, v.hostname, v.service)).catch(e=>callback(e));
 }
 
-const defaultResolver = new Resolver({timeout: -1}, CFResolver);
+const defaultResolver = new CallbackResolver();
 const defaultPromiseResolver = new CFResolver();
 
 export = {
     ...constants,
-    Resolver,
+    Resolver: CallbackResolver,
     promises: {
         Resolver: CFResolver,
         getServers: defaultPromiseResolver.getServers,
