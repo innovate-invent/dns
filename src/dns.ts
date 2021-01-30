@@ -1,4 +1,5 @@
 import {ErrorCode} from "./constants";
+import * as constants from "./constants.js";
 
 export interface DNSRecord {
     type: string;
@@ -79,10 +80,35 @@ export class DNSError extends Error {
         super(message);
         this.code = code;
     }
+
+    static readonly NODATA = new DNSError('DNS server returned answer with no data', constants.NODATA);
+    static readonly FORMERR = new DNSError('DNS server claims query was misformatted', constants.FORMERR);
+    static readonly SERVFAIL = new DNSError('DNS server returned general failure', constants.SERVFAIL);
+    static readonly NOTFOUND = new DNSError('Domain name not found', constants.NOTFOUND);
+    static readonly NOTIMP = new DNSError('DNS server does not implement requested operation', constants.NOTIMP);
+    static readonly REFUSED = new DNSError('DNS server refused query', constants.REFUSED);
+    static readonly BADQUERY = new DNSError('Misformatted DNS query', constants.BADQUERY);
+    static readonly BADNAME = new DNSError('Misformatted host name', constants.BADNAME);
+    static readonly BADFAMILY = new DNSError('Unsupported address family', constants.BADFAMILY);
+    static readonly BADRESP = new DNSError('Misformatted DNS reply', constants.BADRESP);
+    static readonly CONNREFUSED = new DNSError('Could not contact DNS servers', constants.CONNREFUSED);
+    static readonly TIMEOUT = new DNSError('Timeout while contacting DNS servers', constants.TIMEOUT);
+    static readonly EOF = new DNSError('End of file', constants.EOF);
+    static readonly FILE = new DNSError('Error reading file', constants.FILE);
+    static readonly NOMEM = new DNSError('Out of memory', constants.NOMEM);
+    static readonly DESTRUCTION = new DNSError('Channel is being destroyed', constants.DESTRUCTION);
+    static readonly BADSTR = new DNSError('Misformatted string', constants.BADSTR);
+    static readonly BADFLAGS = new DNSError('Illegal flags specified', constants.BADFLAGS);
+    static readonly NONAME = new DNSError('Given host name is not numeric', constants.NONAME);
+    static readonly BADHINTS = new DNSError('Illegal hints flags specified', constants.BADHINTS);
+    static readonly NOTINITIALIZED = new DNSError('c-ares library initialization not yet performed', constants.NOTINITIALIZED);
+    static readonly LOADIPHLPAPI = new DNSError('Error loading iphlpapi.dll', constants.LOADIPHLPAPI);
+    static readonly ADDRGETNETWORKPARAMS = new DNSError('Could not find GetNetworkParams function', constants.ADDRGETNETWORKPARAMS);
+    static readonly CANCELLED = new DNSError('DNS query cancelled', constants.CANCELLED);
 }
 
-export type LookupCallback = (err: DNSError | undefined, address: string, family: number) => void;
-export type LookupCallbackAll = (err: DNSError | undefined, addresses: { address: string, family: number }[]) => void;
+export type LookupCallback = (err?: DNSError, address?: string, family?: number) => void;
+export type LookupCallbackAll = (err?: DNSError, addresses?: { address: string, family: number }[]) => void;
 
 export interface Resolver {
     // constructor(options?: { timeout: number });

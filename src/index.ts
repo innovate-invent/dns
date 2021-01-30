@@ -8,19 +8,23 @@ import {
     ARecord,
     AAAARecord,
     DNSError, LookupCallback, LookupCallbackAll
-} from './dns'
-import CFResolver from './cloudflare'
-import * as constants from './constants'
+} from './dns.js'
+import CFResolver from './cloudflare.js'
+import * as constants from './constants.js'
 
-
+/**
+ * Wrapper around Promise based Resolver implementations to support callback interface.
+ * Pass an instantiated PromiseResolver to constructor to wrap the resolver.
+ * Defaults to CloudFlare resolver.
+ */
 class CallbackResolver implements Resolver {
     _resolver: PromiseResolver;
 
     constructor(options?: { timeout: number; } | PromiseResolver) {
-        if ('timeout' in options) {
-            this._resolver = new CFResolver(options);
-        } else if (options === undefined) {
+        if (options === undefined) {
             this._resolver = new CFResolver();
+        } else if ('timeout' in options) {
+            this._resolver = new CFResolver(options);
         } else {
             this._resolver = options;
         }
@@ -118,7 +122,7 @@ class CallbackResolver implements Resolver {
 }
 
 function lookup(hostname: string, callback: LookupCallback): void;
-function lookup(hostname: string, options: 4 | 6 | { family: 4 | 6 | 0, hints: number, all: boolean, verbatim: boolean }, callback: LookupCallback | LookupCallbackAll): void;
+function lookup(hostname: string, options: 4 | 6 | { family: 4 | 6 | 0, hints?: number, all?: boolean, verbatim?: boolean }, callback: LookupCallback | LookupCallbackAll): void;
 function lookup(hostname: string, ...args: any[]): void {
     const callback = args.pop();
     defaultPromiseResolver.lookup(hostname, args[0]).then(v=>Array.isArray(v)?callback(undefined, v) : callback(undefined, v.address, v.family)).catch(e=>callback(e));
@@ -131,7 +135,7 @@ function lookupService(address: string, port: number, callback: (err?: DNSError,
 const defaultResolver = new CallbackResolver();
 const defaultPromiseResolver = new CFResolver();
 
-export = {
+export default {
     ...constants,
     Resolver: CallbackResolver,
     promises: {

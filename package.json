@@ -10,20 +10,29 @@
     "type": "git",
     "url": "https://github.com/innovate-invent/dns.git"
   },
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "src/index.js",
+  "type": "module",
+  "types": "src/index.d.ts",
   "files": [
-    "dist/"
+    "src/"
   ],
   "scripts": {
     "prebuild": "npm run lint",
     "build": "tsc",
     "lint": "tslint src/*.ts",
-    "prepare": "npm run build",
-    "clean": "rm -r **/*.js **/*.js.map"
+    "clean": "rm -rf */*.js */*.js.map dist",
+    "pretest": "npm run clean",
+    "test": "ts-mocha",
+    "bundle": "webpack"
   },
-  "dependencies": {
+  "dependencies": {},
+  "devDependencies": {
+    "@types/mocha": "^8.2.0",
+    "@types/chai": "^4.2.14",
+    "tslint": "^6.1.3",
     "typescript": "^4.1.3",
-    "tslint": "^6.1.3"
+    "webpack": "^5.18.0",
+    "webpack-cli": "^4.4.0",
+    "ts-loader": "^8.0.14"
   }
 }

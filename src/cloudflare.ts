@@ -1,6 +1,6 @@
-import { BaseResolver } from './base_resolver'
-import {AAAARecord, ARecord, CNAMERecord, DNSRecord, NAPTRRecord, SOARecord, SRVRecord} from './dns'
-import {CANCELLED, NOTIMP, RecordType} from "./constants";
+import { BaseResolver } from './base_resolver.js'
+import {AAAARecord, ARecord, CNAMERecord, DNSRecord, NAPTRRecord, SOARecord, SRVRecord} from './dns.js'
+import {RecordType} from "./constants.js";
 
 interface Response {
     Status: number; // The Response Code of the DNS Query. These are defined here: https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-6
@@ -22,9 +22,7 @@ interface Response {
 }
 
 export default class Resolver extends BaseResolver {
-    getServers(): string[] {
-        return ['cloudflare-dns.com'];
-    }
+    protected servers: string[] = ['cloudflare-dns.com'];
 
     resolve(hostname: string, rrtype?: "A"|"AAAA"|"CNAME"|"NS"|"PTR"): Promise<string[]>;
     resolve(hostname: string, rrtype: "ANY"): Promise<DNSRecord[]>;
@@ -35,7 +33,7 @@ export default class Resolver extends BaseResolver {
     resolve(hostname: string, rrtype: "SRV"): Promise<SRVRecord>;
     resolve(hostname: string, rrtype: "TXT"): Promise<string[][]>;
     resolve(hostname: string, rrtype?: "A" | "AAAA" | "ANY" | "CAA" | "CNAME" | "MX" | "NAPTR" | "NS" | "PTR" | "SOA" | "SRV" | "TXT"): Promise<string[] | DNSRecord[] | { critical: number; iodef?: string; issue?: string }[] | { priority: number; exchange: string }[] | NAPTRRecord[] | SOARecord | SRVRecord | string[][]> {
-        return this._fetch(`https://cloudflare-dns.com/dns-query?name=${hostname}&type=${rrtype}&ct=application/dns-json`)
+        return this._fetch(`https://${this.getServers()[0]}/dns-query?name=${hostname}&type=${rrtype}&ct=application/dns-json`)
             .then(response => response.json())
             .then((data: Response) => {
                 switch (rrtype) {
@@ -46,7 +44,6 @@ export default class Resolver extends BaseResolver {
                     case 'NS':
                     case 'PTR':
                         return data.Answer.map(item => item.data);
-                        break;
                     case 'ANY':
                         return data.Answer.map(item=>{
                             switch (item.type) {
@@ -69,6 +66,6 @@ export default class Resolver extends BaseResolver {
                     case 'TXT':
                         throw new Error('Not implemented'); // TODO parse response into record types
                 }
-            });
+            }); // TODO catch CF specific errors and translate to internal error codes
     }
 }
