@@ -20,7 +20,7 @@
     "prebuild": "npm run lint",
     "build": "tsc",
     "lint": "tslint src/*.ts",
-    "clean": "rm -rf */*.js */*.js.map dist",
+    "clean": "rm -rf dist",
     "pretest": "npm run clean",
     "test": "ts-mocha",
     "bundle": "webpack"

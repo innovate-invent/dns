@@ -45,11 +45,11 @@ class CallbackResolver implements Resolver {
     resolve(hostname: string, rrtype: "MX", callback: (err?: DNSError, records?: { priority: number; exchange: string }[]) => void): void;
     resolve(hostname: string, rrtype: "NAPTR", callback: (err?: DNSError, records?: NAPTRRecord[]) => void): void;
     resolve(hostname: string, rrtype: "SOA", callback: (err?: DNSError, records?: SOARecord) => void): void;
-    resolve(hostname: string, rrtype: "SRV", callback: (err?: DNSError, records?: SRVRecord) => void): void;
+    resolve(hostname: string, rrtype: "SRV", callback: (err?: DNSError, records?: SRVRecord[]) => void): void;
     resolve(hostname: string, rrtype: "TXT", callback: (err?: DNSError, records?: string[][]) => void): void;
     resolve(hostname: string, ...args: any[]): void {
         const callback = args.pop();
-        this._resolver.resolve(hostname, args[0]).then(v=>callback(null, v)).catch(e=>callback(e, null));
+        this._resolver.resolve(hostname, args[0]).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
 
     resolve4(hostname: string, callback: (err?: DNSError, address?: string[]) => void): void;
@@ -57,7 +57,7 @@ class CallbackResolver implements Resolver {
     resolve4(hostname: string, options: { ttl: false }, callback: (err?: DNSError, address?: string[]) => void): void;
     resolve4(hostname: string, ...args: any[]): void {
         const callback = args.pop();
-        this._resolver.resolve4(hostname, args[0]).then(v=>callback(null, v)).catch(e=>callback(e, null));
+        this._resolver.resolve4(hostname, args[0]).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
 
     resolve6(hostname: string, callback: (err?: DNSError, address?: string[]) => void): void;
@@ -65,51 +65,51 @@ class CallbackResolver implements Resolver {
     resolve6(hostname: string, options: { ttl: false }, callback: (err?: DNSError, address?: string[]) => void): void;
     resolve6(hostname: string, ...args: any[]): void {
         const callback = args.pop();
-        this._resolver.resolve6(hostname, args[0]).then(v=>callback(null, v)).catch(e=>callback(e, null));
+        this._resolver.resolve6(hostname, args[0]).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
 
     resolveAny(hostname: string, callback: (err?: DNSError, ret?: DNSRecord[]) => void): void {
-        this._resolver.resolveAny(hostname).then(v=>callback(null, v)).catch(e=>callback(e, null));
+        this._resolver.resolveAny(hostname).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
 
     resolveCaa(hostname: string, callback: (err?: DNSError, records?: { critical: number; iodef?: string; issue?: string }[]) => void): void {
-        this._resolver.resolveCaa(hostname).then(v=>callback(null, v)).catch(e=>callback(e, null));
+        this._resolver.resolveCaa(hostname).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
 
     resolveCname(hostname: string, callback: (err?: DNSError, addresses?: string[]) => void): void {
-        this._resolver.resolveCname(hostname).then(v=>callback(null, v)).catch(e=>callback(e, null));
+        this._resolver.resolveCname(hostname).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
 
     resolveMx(hostname: string, callback: (err?: DNSError, addresses?: { priority: number; exchange: string }[]) => void): void {
-        this._resolver.resolveMx(hostname).then(v=>callback(null, v)).catch(e=>callback(e, null));
+        this._resolver.resolveMx(hostname).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
 
     resolveNaptr(hostname: string, callback: (err?: DNSError, addresses?: NAPTRRecord[]) => void): void {
-        this._resolver.resolveNaptr(hostname).then(v=>callback(null, v)).catch(e=>callback(e, null));
+        this._resolver.resolveNaptr(hostname).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
 
     resolveNs(hostname: string, callback: (err?: DNSError, addresses?: string[]) => void): void {
-        this._resolver.resolveNs(hostname).then(v=>callback(null, v)).catch(e=>callback(e, null));
+        this._resolver.resolveNs(hostname).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
 
     resolvePtr(hostname: string, callback: (err?: DNSError, addresses?: string[]) => void): void {
-        this._resolver.resolvePtr(hostname).then(v=>callback(null, v)).catch(e=>callback(e, null));
+        this._resolver.resolvePtr(hostname).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
 
     resolveSoa(hostname: string, callback: (err?: DNSError, address?: SOARecord) => void): void {
-        this._resolver.resolveSoa(hostname).then(v=>callback(null, v)).catch(e=>callback(e, null));
+        this._resolver.resolveSoa(hostname).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
 
-    resolveSrv(hostname: string, callback: (err?: DNSError, addresses?: SRVRecord) => void): void {
-        this._resolver.resolveSrv(hostname).then(v=>callback(null, v)).catch(e=>callback(e, null));
+    resolveSrv(hostname: string, callback: (err?: DNSError, addresses?: SRVRecord[]) => void): void {
+        this._resolver.resolveSrv(hostname).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
 
     resolveTxt(hostname: string, callback: (err?: DNSError, records?: string[][]) => void): void {
-        this._resolver.resolveTxt(hostname).then(v=>callback(null, v)).catch(e=>callback(e, null));
+        this._resolver.resolveTxt(hostname).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
 
     reverse(hostname: string, callback: (err?: DNSError, hostnames?: string[]) => void): void {
-        this._resolver.reverse(hostname).then(v=>callback(null, v)).catch(e=>callback(e, null));
+        this._resolver.reverse(hostname).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
 
     setLocalAddress(ipv4: string, ipv6: string): void {
@@ -121,60 +121,95 @@ class CallbackResolver implements Resolver {
     }
 }
 
+const defaultResolver = new CallbackResolver();
+const defaultPromiseResolver = new CFResolver();
+
+type LookupResult = { address: string, family: number };
+
+function lookupPromise(hostname: string, options?: 4 | 6 | { family: 4 | 6 | 0, hints?: number, all?: false, verbatim?: boolean }): Promise<LookupResult>;
+function lookupPromise(hostname: string, options: { family: 4 | 6 | 0, hints?: number, all: true, verbatim?: boolean }): Promise<LookupResult[]>;
+function lookupPromise(hostname: string, ...args: any[]): Promise<LookupResult | LookupResult[]> {
+    const options = args[0];
+    let family: number = options as number || 4;
+    let hints = 0; // Ignored, not supported
+    let all = false;
+    let verbatim = false; // Ignored, always false
+    if (typeof options === 'object') {
+        family = options.family || family;
+        hints = options.hints || hints;
+        all = options.all || all;
+        verbatim = options.verbatim || verbatim;
+    }
+    let promise = Promise.resolve([]);
+    if (family === 6 || family === 0) {
+        promise = defaultPromiseResolver.resolve(hostname, 'AAAA').then(r=>r.map(v=>({address: v, family: 6})));
+    }
+
+    if (family === 4 || family === 0) {
+        promise = Promise.all([promise, defaultPromiseResolver.resolve(hostname, 'A').then(r=>r.map(v => ({address: v, family: 4})))]).then(r=>r[0].concat(r[1]));
+    }
+
+    return promise.then(result=>{
+        if (result.length === 0) throw DNSError.NODATA;
+        return all ? result : result[0];
+    });
+}
+
+function lookupServicePromise(address: string, port: number): Promise<{hostname: string, service: string}> {
+    throw DNSError.NOTIMP;
+}
+
 function lookup(hostname: string, callback: LookupCallback): void;
 function lookup(hostname: string, options: 4 | 6 | { family: 4 | 6 | 0, hints?: number, all?: boolean, verbatim?: boolean }, callback: LookupCallback | LookupCallbackAll): void;
 function lookup(hostname: string, ...args: any[]): void {
     const callback = args.pop();
-    defaultPromiseResolver.lookup(hostname, args[0]).then(v=>Array.isArray(v)?callback(undefined, v) : callback(undefined, v.address, v.family)).catch(e=>callback(e));
+    lookupPromise(hostname, args[0]).then(result=>Array.isArray(result) ? callback(undefined, result) : callback(undefined, result.address, result.family)).catch(err=>callback(err));
 }
 
 function lookupService(address: string, port: number, callback: (err?: DNSError, hostname?: string, service?: string)=>void): void {
-    defaultPromiseResolver.lookupService(address, port).then(v=>callback(undefined, v.hostname, v.service)).catch(e=>callback(e));
+    lookupServicePromise(address, port).then(v=>callback(undefined, v.hostname, v.service)).catch(e=>callback(e));
 }
-
-const defaultResolver = new CallbackResolver();
-const defaultPromiseResolver = new CFResolver();
 
 export default {
     ...constants,
     Resolver: CallbackResolver,
     promises: {
         Resolver: CFResolver,
-        getServers: defaultPromiseResolver.getServers,
-        lookup: defaultPromiseResolver.lookup,
-        lookupService: defaultPromiseResolver.lookupService,
-        resolve: defaultPromiseResolver.resolve,
-        resolve4: defaultPromiseResolver.resolve4,
-        resolve6: defaultPromiseResolver.resolve6,
-        resolveAny: defaultPromiseResolver.resolveAny,
-        resolveCname: defaultPromiseResolver.resolveCname,
-        resolveCaa: defaultPromiseResolver.resolveCaa,
-        resolveMx: defaultPromiseResolver.resolveMx,
-        resolveNaptr: defaultPromiseResolver.resolveNaptr,
-        resolveNs: defaultPromiseResolver.resolveNs,
-        resolvePtr: defaultPromiseResolver.resolvePtr,
-        resolveSoa: defaultPromiseResolver.resolveSoa,
-        resolveSrv: defaultPromiseResolver.resolveSrv,
-        resolveTxt: defaultPromiseResolver.resolveTxt,
-        reverse: defaultPromiseResolver.reverse,
-        setServers: defaultPromiseResolver.setServers,
+        lookup: lookupPromise,
+        lookupService: lookupServicePromise,
+        getServers: defaultPromiseResolver.getServers.bind(defaultPromiseResolver),
+        resolve: defaultPromiseResolver.resolve.bind(defaultPromiseResolver),
+        resolve4: defaultPromiseResolver.resolve4.bind(defaultPromiseResolver),
+        resolve6: defaultPromiseResolver.resolve6.bind(defaultPromiseResolver),
+        resolveAny: defaultPromiseResolver.resolveAny.bind(defaultPromiseResolver),
+        resolveCname: defaultPromiseResolver.resolveCname.bind(defaultPromiseResolver),
+        resolveCaa: defaultPromiseResolver.resolveCaa.bind(defaultPromiseResolver),
+        resolveMx: defaultPromiseResolver.resolveMx.bind(defaultPromiseResolver),
+        resolveNaptr: defaultPromiseResolver.resolveNaptr.bind(defaultPromiseResolver),
+        resolveNs: defaultPromiseResolver.resolveNs.bind(defaultPromiseResolver),
+        resolvePtr: defaultPromiseResolver.resolvePtr.bind(defaultPromiseResolver),
+        resolveSoa: defaultPromiseResolver.resolveSoa.bind(defaultPromiseResolver),
+        resolveSrv: defaultPromiseResolver.resolveSrv.bind(defaultPromiseResolver),
+        resolveTxt: defaultPromiseResolver.resolveTxt.bind(defaultPromiseResolver),
+        reverse: defaultPromiseResolver.reverse.bind(defaultPromiseResolver),
+        setServers: defaultPromiseResolver.setServers.bind(defaultPromiseResolver),
     },
-    getServers: defaultResolver.getServers,
     lookup,
     lookupService,
-    resolve: defaultResolver.resolve,
-    resolve4: defaultResolver.resolve4,
-    resolve6: defaultResolver.resolve6,
-    resolveAny: defaultResolver.resolveAny,
-    resolveCname: defaultResolver.resolveCname,
-    resolveCaa: defaultResolver.resolveCaa,
-    resolveMx: defaultResolver.resolveMx,
-    resolveNaptr: defaultResolver.resolveNaptr,
-    resolveNs: defaultResolver.resolveNs,
-    resolvePtr: defaultResolver.resolvePtr,
-    resolveSoa: defaultResolver.resolveSoa,
-    resolveSrv: defaultResolver.resolveSrv,
-    resolveTxt: defaultResolver.resolveTxt,
-    reverse: defaultResolver.reverse,
-    setServers: defaultResolver.setServers,
+    getServers: defaultResolver.getServers.bind(defaultResolver),
+    resolve: defaultResolver.resolve.bind(defaultResolver),
+    resolve4: defaultResolver.resolve4.bind(defaultResolver),
+    resolve6: defaultResolver.resolve6.bind(defaultResolver),
+    resolveAny: defaultResolver.resolveAny.bind(defaultResolver),
+    resolveCname: defaultResolver.resolveCname.bind(defaultResolver),
+    resolveCaa: defaultResolver.resolveCaa.bind(defaultResolver),
+    resolveMx: defaultResolver.resolveMx.bind(defaultResolver),
+    resolveNaptr: defaultResolver.resolveNaptr.bind(defaultResolver),
+    resolveNs: defaultResolver.resolveNs.bind(defaultResolver),
+    resolvePtr: defaultResolver.resolvePtr.bind(defaultResolver),
+    resolveSoa: defaultResolver.resolveSoa.bind(defaultResolver),
+    resolveSrv: defaultResolver.resolveSrv.bind(defaultResolver),
+    resolveTxt: defaultResolver.resolveTxt.bind(defaultResolver),
+    reverse: defaultResolver.reverse.bind(defaultResolver),
+    setServers: defaultResolver.setServers.bind(defaultResolver),
 }
