@@ -8,47 +8,24 @@ import {
     DNSRecord,
     NAPTRRecord,
     NSRecord,
-    parseCAA,
+    parseCAA, parseLOC,
     parseMX,
     parseNAPTR,
-    parseSOA,
-    parseSRV,
+    parseSOA, parseSPF,
+    parseSRV, parseSVCB, parseURI,
     PTRRecord,
     SOARecord,
     SRVRecord,
     TXTRecord,
+    Response,
 } from './dns.js'
 import {RecordType} from "./constants.js";
 
-interface Response {
-    Status: number; // The Response Code of the DNS Query. These are defined here: https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-6
-    TC: boolean; // If true, it means the truncated bit was set. This happens when the DNS answer is larger than a single UDP or TCP packet. TC will almost always be false with Cloudflare DNS over HTTPS because Cloudflare supports the maximum response size.
-    RD: boolean; // If true, it means the Recursive Desired bit was set. This is always set to true for Cloudflare DNS over HTTPS.
-    RA: boolean; // If true, it means the Recursion Available bit was set. This is always set to true for Cloudflare DNS over HTTPS.
-    AD: boolean; // If true, it means that every record in the answer was verified with DNSSEC.
-    CD: boolean; // If true, the client asked to disable DNSSEC validation. In this case, Cloudflare will still fetch the DNSSEC-related records, but it will not attempt to validate the records.
-    Question: [{
-        name: string; // The record name requested.
-        type: RecordType; // The type of DNS record requested. These are defined here: https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4
-    }];
-    Answer: [{
-        name: string; // The record owner.
-        type: RecordType; // The type of DNS record. These are defined here: https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4
-        TTL: number; // The number of seconds the answer can be stored in cache before it is considered stale.
-        data: string; // The value of the DNS record for the given name and type. The data will be in text for standardized record types and in hex for unknown types.
-    }];
-    Authority: [{
-        name: string; // The record owner.
-        type: RecordType; // The type of DNS record. These are defined here: https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4
-        TTL: number; // The number of seconds the answer can be stored in cache before it is considered stale.
-        data: string; // The value of the DNS record for the given name and type. The data will be in text for standardized record types and in hex for unknown types.
-    }];
-}
 
 export default class Resolver extends BaseResolver {
     protected servers: string[] = ['cloudflare-dns.com'];
 
-    resolve(hostname: string, rrtype?: "A"|"AAAA"|"CNAME"|"NS"|"PTR"): Promise<string[]>;
+    resolve(hostname: string, rrtype?: "A"|"AAAA"|"CNAME"|"NS"|"PTR"|string): Promise<string[]>;
     resolve(hostname: string, rrtype?: "A", options?:{ttl:true}): Promise<ARecord[]>;
     resolve(hostname: string, rrtype?: "AAAA", options?:{ttl:true}): Promise<AAAARecord[]>;
     resolve(hostname: string, rrtype: "ANY"): Promise<DNSRecord[]>;
@@ -72,7 +49,7 @@ export default class Resolver extends BaseResolver {
                     case 'CNAME':
                     case 'NS':
                     case 'PTR':
-                        return data.Answer.map(item => item.data);
+                        return data.Answer.map(item=>item.data);
                     case 'ANY':
                         return data.Answer.map(item=>{
                             switch (item.type) {
@@ -101,7 +78,7 @@ export default class Resolver extends BaseResolver {
                     case 'MX':
                         return data.Answer.map(item=>parseMX(item.data));
                     case 'NAPTR':
-                        return data.Answer.map(item=>item.data);// TODO parseNAPTR(item.data));
+                        return data.Answer.map(item=>parseNAPTR(item.data));
                     case 'SOA':
                         return data.Answer.map(item=>parseSOA(item.data))[0];
                     case 'SRV':
@@ -109,7 +86,15 @@ export default class Resolver extends BaseResolver {
                     case 'TXT':
                         return data.Answer.map(item=>item.data.split(' '));
                     case 'CAA':
-                        return data.Answer.filter(item=>item.type===RecordType.CAA).map(item=>item.data); // TODO parseCAA(item.data));
+                        return data.Answer.filter(item=>item.type===RecordType.CAA).map(item=>parseCAA(item.data));
+                    case 'LOC':
+                        return data.Answer.map(item=>parseLOC(item.data));
+                    case 'SPF':
+                        return data.Answer.map(item=>parseSPF(item.data));
+                    case 'SVCB':
+                        return data.Answer.map(item=>parseSVCB(item.data));
+                    case 'URI':
+                        return data.Answer.map(item=>parseURI(item.data));
                 }
             }); // TODO catch CF specific errors and translate to internal error codes
     }
