@@ -1,85 +1,95 @@
-import {ErrorCode} from "./constants";
+import {ErrorCode, RecordType} from "./constants.js";
 import * as constants from "./constants.js";
 
-export interface DNSRecord {
+export type DNSRecord = {}
+
+export interface AnyDNSRecord {
     type: string;
 }
 
 export interface ARecord extends DNSRecord {
-    type: 'A';
     address: string;
     ttl: number;
+}
+
+export interface AnyARecord extends ARecord {
+    type: 'A';
 }
 
 export interface AAAARecord extends DNSRecord {
-    type: 'AAAA';
     address: string;
     ttl: number;
 }
 
+export interface AnyAAAARecord extends AAAARecord {
+    type: 'AAAA';
+}
+
 export interface CNAMERecord extends DNSRecord {
-    type: 'CNAME';
     value: string;
 }
 
+export interface AnyCNAMERecord extends CNAMERecord {
+    type: 'CNAME';
+}
+
 export interface CAARecord extends DNSRecord {
-    type: 'CAA';
     critical: number;
     iodef?: string;
     issue?: string;
 }
 
-export function parseCAA(value: string): CAARecord {
-    const [critical, type, val] = value.split(' ') as [string, 'iodef'|'issue', string];
-    const record = {type: 'CAA', critical: parseInt(critical, 10)} as CAARecord;
-    record[type] = val;
-    return record;
+export interface AnyCAARecord extends CAARecord {
+    type: 'CAA';
 }
 
 export interface NSRecord extends DNSRecord {
-    type: 'NS';
     value: string;
+}
+
+export interface AnyNSRecord extends NSRecord {
+    type: 'NS';
 }
 
 export interface PTRRecord extends DNSRecord {
-    type: 'PTR';
     value: string;
 }
 
+export interface AnyPTRRecord extends PTRRecord {
+    type: 'PTR';
+}
+
 export interface TXTRecord extends DNSRecord {
-    type: 'TXT';
     entries: string[];
 }
 
+export interface AnyTXTRecord extends TXTRecord {
+    type: 'TXT';
+}
+
 export interface MXRecord extends DNSRecord {
-    type: 'MX';
     priority: number;
     exchange: string;
 }
 
-export function parseMX(value: string): MXRecord {
-    const record = value.split(' ');
-    return {type:'MX', priority: parseInt(record[0], 10), exchange: record[1] };
+export interface AnyMXRecord extends MXRecord {
+    type: 'MX';
 }
 
 export interface NAPTRRecord extends DNSRecord {
-    type: 'NAPTR';
+    order: number;
+    preference: number;
     flags: string;
     service: string;
     regexp: string;
     replacement: string;
-    order: number;
-    preference: number;
 }
 
-export function parseNAPTR(value: string): NAPTRRecord {
-    const record = {type: "NAPTR"} as NAPTRRecord;
-    [record.flags, record.service, record.regexp, record.replacement, record.order, record.preference] = value.split(' ').map(v=>{const i = parseInt(v, 10); return Number.isNaN(i) ? v : i}) as [string, string, string, string, number, number];
-    return record;
+export interface AnyNAPTRRecord extends NAPTRRecord {
+    type: 'NAPTR';
 }
 
 export interface SOARecord extends DNSRecord {
-    type: 'SOA';
     nsname: string;
     hostmaster: string;
     serial: number;
@@ -89,24 +99,19 @@ export interface SOARecord extends DNSRecord {
     minttl: number;
 }
 
-export function parseSOA(value: string): SOARecord {
-    const record = {type: "SOA"} as SOARecord;
-    [record.nsname, record.hostmaster, record.serial, record.refresh, record.retry, record.expire, record.minttl] = value.split(' ').map(v=>{const i = parseInt(v, 10); return Number.isNaN(i) ? v : i}) as [string, string, number, number, number, number, number];
-    return record;
+export interface AnySOARecord extends SOARecord {
+    type: 'SOA';
 }
 
 export interface SRVRecord extends DNSRecord {
-    type: 'SRV';
     priority: number;
     weight: number;
     port: number;
     name: string;
 }
 
-export function parseSRV(value: string): SRVRecord {
-    const record = {type: "SRV"} as SRVRecord;
-    [record.priority, record.weight, record.port, record.name] = value.split(' ').map(v=>{const i = parseInt(v, 10); return Number.isNaN(i) ? v : i}) as [number, number, number, string];
-    return record;
+export interface AnySRVRecord extends SRVRecord {
+    type: 'SRV';
 }
 
 export class DNSError extends Error {
@@ -154,9 +159,9 @@ export interface Resolver {
 
     resolve(hostname: string, callback: (err?: DNSError, records?: string[]) => void): void;
     resolve(hostname: string, rrtype: "A"|"AAAA"|"CNAME"|"NS"|"PTR", callback: (err?: DNSError, records?: string[]) => void): void;
-    resolve(hostname: string, rrtype: 'ANY', callback: (err?: DNSError, records?: DNSRecord[]) => void): void;
-    resolve(hostname: string, rrtype: 'CAA', callback: (err?: DNSError, records?: {critical: number, iodef?: string, issue?: string}[]) => void): void;
-    resolve(hostname: string, rrtype: 'MX', callback: (err?: DNSError, records?: {priority: number, exchange: string}[]) => void): void;
+    resolve(hostname: string, rrtype: 'ANY', callback: (err?: DNSError, records?: AnyDNSRecord[]) => void): void;
+    resolve(hostname: string, rrtype: 'CAA', callback: (err?: DNSError, records?: CAARecord[]) => void): void;
+    resolve(hostname: string, rrtype: 'MX', callback: (err?: DNSError, records?: MXRecord[]) => void): void;
     resolve(hostname: string, rrtype: 'NAPTR', callback: (err?: DNSError, records?: NAPTRRecord[]) => void): void;
     resolve(hostname: string, rrtype: 'SOA', callback: (err?: DNSError, records?: SOARecord) => void): void;
     resolve(hostname: string, rrtype: 'SRV', callback: (err?: DNSError, records?: SRVRecord[]) => void): void;
@@ -170,7 +175,7 @@ export interface Resolver {
     resolve6(hostname: string, options: { ttl: true }, callback: (err?: DNSError, address?: AAAARecord[]) => void): void;
     resolve6(hostname: string, options: { ttl: false }, callback: (err?: DNSError, address?: string[]) => void): void;
 
-    resolveAny(hostname: string, callback: (err?: DNSError, ret?: DNSRecord[]) => void): void;
+    resolveAny(hostname: string, callback: (err?: DNSError, ret?: AnyDNSRecord[]) => void): void;
     resolveCaa(hostname: string, callback: (err?: DNSError, records?: {critical: number, iodef?: string, issue?: string}[]) => void): void;
     resolveCname(hostname: string, callback: (err?: DNSError, addresses?: string[]) => void): void;
     resolveMx(hostname: string, callback: (err?: DNSError, addresses?: {priority: number, exchange: string}[]) => void): void;
@@ -183,6 +188,8 @@ export interface Resolver {
     reverse(hostname: string, callback: (err?: DNSError, hostnames?: string[]) => void): void;
 }
 
+export type ResolveOptions = {ttl?:boolean, raw?: boolean};
+
 export interface PromiseResolver {
     // constructor(options?: { timeout: number }): Resolver;
     cancel(): void;
@@ -190,14 +197,17 @@ export interface PromiseResolver {
     getServers(): string[];
     setServers(servers: string[]): void;
 
-    resolve(hostname: string, rrtype?: "A"|"AAAA"|"CNAME"|"NS"|"PTR"): Promise<string[]>;
-    resolve(hostname: string, rrtype: 'ANY'): Promise<DNSRecord[]>;
-    resolve(hostname: string, rrtype: 'CAA'): Promise<{critical: number, iodef?: string, issue?: string}[]>;
-    resolve(hostname: string, rrtype: 'MX'): Promise<{priority: number, exchange: string}[]>;
-    resolve(hostname: string, rrtype: 'NAPTR'): Promise<NAPTRRecord[]>;
-    resolve(hostname: string, rrtype: 'SOA'): Promise<SOARecord>;
-    resolve(hostname: string, rrtype: 'SRV'): Promise<SRVRecord[]>;
-    resolve(hostname: string, rrtype: 'TXT'): Promise<string[][]>;
+    resolve(hostname: string, rrtype: "ANY", options?: {raw: false}): Promise<AnyDNSRecord[]>;
+    resolve(hostname: string, rrtype: "CAA", options?: {raw: false}): Promise<CAARecord[]>;
+    resolve(hostname: string, rrtype: "MX", options?: {raw: false}): Promise<MXRecord[]>;
+    resolve(hostname: string, rrtype: "NAPTR", options?: {raw: false}): Promise<NAPTRRecord[]>;
+    resolve(hostname: string, rrtype: "SOA", options?: {raw: false}): Promise<SOARecord>;
+    resolve(hostname: string, rrtype: "SRV", options?: {raw: false}): Promise<SRVRecord[]>;
+    resolve(hostname: string, rrtype: "TXT", options?: {raw: false}): Promise<string[][]>;
+    resolve(hostname: string, rrtype?: "A"|"AAAA"|"CNAME"|"NS"|"PTR", options?: {raw: false}): Promise<string[]>;
+    resolve(hostname: string, rrtype: keyof typeof RecordType, options: {raw: true}): Promise<any>;
+    resolve(hostname: string, rrtype: "A", options: {ttl:true, raw: false}): Promise<ARecord[]>;
+    resolve(hostname: string, rrtype: "AAAA", options: {ttl:true, raw: false}): Promise<AAAARecord[]>;
 
     resolve4(hostname: string, options: { ttl: true }): Promise<ARecord[]>;
     resolve4(hostname: string, options?: { ttl: false }): Promise<string[]>;
@@ -205,7 +215,7 @@ export interface PromiseResolver {
     resolve6(hostname: string, options: { ttl: true }): Promise<AAAARecord[]>;
     resolve6(hostname: string, options?: { ttl: false }): Promise<string[]>;
 
-    resolveAny(hostname: string): Promise<DNSRecord[]>;
+    resolveAny(hostname: string): Promise<AnyDNSRecord[]>;
     resolveCaa(hostname: string): Promise<{critical: number, iodef?: string, issue?: string}[]>;
     resolveCname(hostname: string): Promise<string[]>;
     resolveMx(hostname: string): Promise<{priority: number, exchange: string}[]>;

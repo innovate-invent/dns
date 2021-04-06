@@ -20,7 +20,7 @@ export enum RecordType {
     'X25' = 19,    // for X.25 PSDN address     [RFC1183]
     'ISDN' = 20,    // for ISDN address     [RFC1183]
     'RT' = 21,    // for Route Through     [RFC1183]
-    'NSAP' = 22,    // for NSAP address, NSAP style A record     [RFC1706]
+    'NSAP' = 22,    // for NSAP address, NSAP style A record     [RFC1706][RFC1348]
     'NSAP-PTR' = 23,    // for domain name pointer, NSAP style     [RFC1348][RFC1637][RFC1706]
     'SIG' = 24,    // for security signature     [RFC4034][RFC3755][RFC2535][RFC2536][RFC2537][RFC2931][RFC3110][RFC3008]
     'KEY' = 25,    // for security key     [RFC4034][RFC3755][RFC2535][RFC2536][RFC2537][RFC2539][RFC3008][RFC3110]
@@ -52,7 +52,8 @@ export enum RecordType {
     'NSEC3PARAM' = 51,    // NSEC3PARAM     [RFC5155]
     'TLSA' = 52,    // TLSA     [RFC6698]
     'SMIMEA' = 53,    // S/MIME cert association     [RFC8162]     SMIMEA/smimea-completed-template     2015-12-01
-    'Unassigned1' = 54,    // HIP     55     Host Identity Protocol     [RFC8005]
+    // 'Unassigned1' = 54,
+    'HIP' = 55,     // Host Identity Protocol     [RFC8005]
     'NINFO' = 56,    // NINFO     [Jim_Reid]     NINFO/ninfo-completed-template     2008-01-21
     'RKEY' = 57,    // RKEY     [Jim_Reid]     RKEY/rkey-completed-template     2008-01-21
     'TALINK' = 58,    // Trust Anchor LINK     [Wouter_Wijngaards]     TALINK/talink-completed-template     2010-02-17
@@ -61,7 +62,10 @@ export enum RecordType {
     'OPENPGPKEY' = 61,    // OpenPGP Key     [RFC7929]     OPENPGPKEY/openpgpkey-completed-template     2014-08-12
     'CSYNC' = 62,    // Child-To-Parent Synchronization     [RFC7477]         2015-01-27
     'ZONEMD' = 63,    // message digest for DNS zone     [draft-wessels-dns-zone-digest]     ZONEMD/zonemd-completed-template     2018-12-12
-    // 'Unassigned2' = 64-98,    // SPF     99         [RFC7208]
+    'SVCB' = 64,       // https://tools.ietf.org/id/draft-nygren-dnsop-svcb-httpssvc-00.html
+    'HTTPSSVC' = 65,       // https://tools.ietf.org/id/draft-nygren-dnsop-svcb-httpssvc-00.html
+    // 'Unassigned2' = 64-98,
+    'SPF' = 99,         // [RFC7208] https://tools.ietf.org/html/rfc4408
     'UINFO' = 100,    // [IANA-Reserved]
     'UID' = 101,    // [IANA-Reserved]
     'GID' = 102,    // [IANA-Reserved]
@@ -84,10 +88,11 @@ export enum RecordType {
     'AVC' = 258,    // Application Visibility and Control     [Wolfgang_Riedel]     AVC/avc-completed-template     2016-02-26
     'DOA' = 259,    // Digital Object Architecture     [draft-durand-doa-over-dns]     DOA/doa-completed-template     2017-08-30
     'AMTRELAY' = 260,    // Automatic Multicast Tunneling Relay     [RFC-ietf-mboned-driad-amt-discovery-13]     AMTRELAY/amtrelay-completed-template     2019-02-06
-    // 'Unassigned4' = 261-32767,    // TA     32768     DNSSEC Trust Authorities     [Sam_Weiler][http://cameo.library.cmu.edu/][ Deploying DNSSEC Without a Signed Root. Technical Report 1999-19, Information Networking Institute, Carnegie Mellon University, April 2004.]         2005-12-13
+    // 'Unassigned4' = 261-32767,
+    'TA' = 32768,   // DNSSEC Trust Authorities     [Sam_Weiler][http://cameo.library.cmu.edu/][ Deploying DNSSEC Without a Signed Root. Technical Report 1999-19, Information Networking Institute, Carnegie Mellon University, April 2004.]         2005-12-13
     'DLV' = 32769,    // DNSSEC Lookaside Validation (OBSOLETE)     [RFC-ietf-dnsop-obsolete-dlv-02][RFC4431]
     // 'Unassigned5' = 32770-65279,    // Private use     65280-65534
-    'Reserved' = 65535,
+    // 'Reserved' = 65535,
 }
 
 // Each DNS query can return one of the following error codes:
@@ -116,4 +121,28 @@ export const LOADIPHLPAPI = 'LOADIPHLPAPI';        // Error loading iphlpapi.dll
 export const ADDRGETNETWORKPARAMS = 'ADDRGETNETWORKPARAMS';// Could not find GetNetworkParams function.
 export const CANCELLED = 'CANCELLED';            // DNS query cancelled.
 
-export type ErrorCode = 'NODATA'|'FORMERR'|'SERVFAIL'|'NOTFOUND'|'NOTIMP'|'REFUSED'|'BADQUERY'|'BADNAME'|'BADFAMILY'|'BADRESP'|'CONNREFUSED'|'TIMEOUT'|'EOF'|'FILE'|'NOMEM'|'DESTRUCTION'|'BADSTR'|'BADFLAGS'|'NONAME'|'BADHINTS'|'NOTINITIALIZED'|'LOADIPHLPAPI'|'ADDRGETNETWORKPARAMS'|'CANCELLED';
+export type ErrorCode =
+    'NODATA'
+    | 'FORMERR'
+    | 'SERVFAIL'
+    | 'NOTFOUND'
+    | 'NOTIMP'
+    | 'REFUSED'
+    | 'BADQUERY'
+    | 'BADNAME'
+    | 'BADFAMILY'
+    | 'BADRESP'
+    | 'CONNREFUSED'
+    | 'TIMEOUT'
+    | 'EOF'
+    | 'FILE'
+    | 'NOMEM'
+    | 'DESTRUCTION'
+    | 'BADSTR'
+    | 'BADFLAGS'
+    | 'NONAME'
+    | 'BADHINTS'
+    | 'NOTINITIALIZED'
+    | 'LOADIPHLPAPI'
+    | 'ADDRGETNETWORKPARAMS'
+    | 'CANCELLED';

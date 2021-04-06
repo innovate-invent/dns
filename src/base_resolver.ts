@@ -1,16 +1,15 @@
 import {
-    AAAARecord,
-    ARecord,
+    AAAARecord, AnyDNSRecord,
+    ARecord, CAARecord,
     CNAMERecord,
     DNSError,
-    DNSRecord,
+    DNSRecord, MXRecord,
     NAPTRRecord,
-    PromiseResolver,
+    PromiseResolver, ResolveOptions,
     SOARecord,
     SRVRecord
 } from "./dns.js";
 import {CANCELLED, NOTIMP, RecordType} from "./constants.js";
-import * as dns from "./dns.js";
 
 // tslint:disable-next-line no-empty-interface
 export interface BaseResolver extends PromiseResolver {} // Allows partial implementation of PromiseResolver in abstract class using declaration merging
@@ -29,7 +28,7 @@ export abstract class BaseResolver implements PromiseResolver {
         this._pending.clear();
     }
 
-    protected async _fetch(resource: string, options?: object): Promise<Response> {
+    protected async _fetch(resource: string, options?: RequestInit): Promise<Response> {
         const controller = new AbortController();
         let id;
         this._pending.add(controller);
@@ -62,15 +61,7 @@ export abstract class BaseResolver implements PromiseResolver {
         this.servers = servers;
     }
 
-    abstract resolve(hostname: string, rrtype?: "A"|"AAAA"|"CNAME"|"NS"|"PTR", options?:{ttl:boolean}): Promise<string[]>;
-    abstract resolve(hostname: string, rrtype: "ANY", options?:{ttl:boolean}): Promise<DNSRecord[]>;
-    abstract resolve(hostname: string, rrtype: "CAA", options?:{ttl:boolean}): Promise<{ critical: number; iodef?: string; issue?: string }[]>;
-    abstract resolve(hostname: string, rrtype: "MX", options?:{ttl:boolean}): Promise<{ priority: number; exchange: string }[]>;
-    abstract resolve(hostname: string, rrtype: "NAPTR", options?:{ttl:boolean}): Promise<NAPTRRecord[]>;
-    abstract resolve(hostname: string, rrtype: "SOA", options?:{ttl:boolean}): Promise<SOARecord>;
-    abstract resolve(hostname: string, rrtype: "SRV", options?:{ttl:boolean}): Promise<SRVRecord[]>;
-    abstract resolve(hostname: string, rrtype: "TXT", options?:{ttl:boolean}): Promise<string[][]>;
-    abstract resolve(hostname: string, rrtype?: "A" | "AAAA" | "ANY" | "CAA" | "CNAME" | "MX" | "NAPTR" | "NS" | "PTR" | "SOA" | "SRV" | "TXT", options?:{ttl:boolean}): Promise<string[] | DNSRecord[] | { critical: number; iodef?: string; issue?: string }[] | { priority: number; exchange: string }[] | NAPTRRecord[] | SOARecord | SRVRecord[] | string[][]>;
+    abstract resolve(hostname: string, rrtype?: (keyof typeof RecordType) | 'ANY', options?: ResolveOptions): Promise<any>;
 
     resolve4(hostname: string, options: { ttl: true }): Promise<ARecord[]>;
     resolve4(hostname: string, options?: { ttl: false }): Promise<string[]>;
@@ -84,7 +75,7 @@ export abstract class BaseResolver implements PromiseResolver {
         return this.resolve(hostname, 'AAAA', options);
     }
 
-    resolveAny(hostname: string): Promise<DNSRecord[]> {
+    resolveAny(hostname: string): Promise<AnyDNSRecord[]> {
         return this.resolve(hostname, 'ANY');
     }
 

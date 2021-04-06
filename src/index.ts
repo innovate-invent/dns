@@ -7,9 +7,9 @@ import {
     SRVRecord,
     ARecord,
     AAAARecord,
-    DNSError, LookupCallback, LookupCallbackAll
+    DNSError, LookupCallback, LookupCallbackAll, AnyDNSRecord
 } from './dns.js'
-import CFResolver from './cloudflare.js'
+import RFCResolver from './rfc8484.js'
 import * as constants from './constants.js'
 
 /**
@@ -22,9 +22,9 @@ class CallbackResolver implements Resolver {
 
     constructor(options?: { timeout: number; } | PromiseResolver) {
         if (options === undefined) {
-            this._resolver = new CFResolver();
+            this._resolver = new RFCResolver();
         } else if ('timeout' in options) {
-            this._resolver = new CFResolver(options);
+            this._resolver = new RFCResolver(options);
         } else {
             this._resolver = options;
         }
@@ -38,15 +38,6 @@ class CallbackResolver implements Resolver {
         return this._resolver.getServers();
     }
 
-    resolve(hostname: string, callback: (err?: DNSError, records?: string[]) => void): void;
-    resolve(hostname: string, rrtype: "A"|"AAAA"|"CNAME"|"NS"|"PTR", callback: (err?: DNSError, records?: string[]) => void): void;
-    resolve(hostname: string, rrtype: "ANY", callback: (err?: DNSError, records?: DNSRecord[]) => void): void;
-    resolve(hostname: string, rrtype: "CAA", callback: (err?: DNSError, records?: { critical: number; iodef?: string; issue?: string }[]) => void): void;
-    resolve(hostname: string, rrtype: "MX", callback: (err?: DNSError, records?: { priority: number; exchange: string }[]) => void): void;
-    resolve(hostname: string, rrtype: "NAPTR", callback: (err?: DNSError, records?: NAPTRRecord[]) => void): void;
-    resolve(hostname: string, rrtype: "SOA", callback: (err?: DNSError, records?: SOARecord) => void): void;
-    resolve(hostname: string, rrtype: "SRV", callback: (err?: DNSError, records?: SRVRecord[]) => void): void;
-    resolve(hostname: string, rrtype: "TXT", callback: (err?: DNSError, records?: string[][]) => void): void;
     resolve(hostname: string, ...args: any[]): void {
         const callback = args.pop();
         this._resolver.resolve(hostname, args[0]).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
@@ -68,7 +59,7 @@ class CallbackResolver implements Resolver {
         this._resolver.resolve6(hostname, args[0]).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
 
-    resolveAny(hostname: string, callback: (err?: DNSError, ret?: DNSRecord[]) => void): void {
+    resolveAny(hostname: string, callback: (err?: DNSError, ret?: AnyDNSRecord[]) => void): void {
         this._resolver.resolveAny(hostname).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
 
@@ -122,7 +113,7 @@ class CallbackResolver implements Resolver {
 }
 
 const defaultResolver = new CallbackResolver();
-const defaultPromiseResolver = new CFResolver();
+const defaultPromiseResolver = new RFCResolver();
 
 type LookupResult = { address: string, family: number };
 
@@ -142,11 +133,11 @@ function lookupPromise(hostname: string, ...args: any[]): Promise<LookupResult |
     }
     let promise = Promise.resolve([]);
     if (family === 6 || family === 0) {
-        promise = defaultPromiseResolver.resolve(hostname, 'AAAA').then(r=>r.map(v=>({address: v, family: 6})));
+        promise = defaultPromiseResolver.resolve(hostname, 'AAAA').then(r=>r.map((v: string)=>({address: v, family: 6})));
     }
 
     if (family === 4 || family === 0) {
-        promise = Promise.all([promise, defaultPromiseResolver.resolve(hostname, 'A').then(r=>r.map(v => ({address: v, family: 4})))]).then(r=>r[0].concat(r[1]));
+        promise = Promise.all([promise, defaultPromiseResolver.resolve(hostname, 'A').then(r=>r.map((v: string)=>({address: v, family: 4})))]).then(r=>r[0].concat(r[1]));
     }
 
     return promise.then(result=>{
@@ -174,7 +165,7 @@ export default {
     ...constants,
     Resolver: CallbackResolver,
     promises: {
-        Resolver: CFResolver,
+        Resolver: RFCResolver,
         lookup: lookupPromise,
         lookupService: lookupServicePromise,
         getServers: defaultPromiseResolver.getServers.bind(defaultPromiseResolver),

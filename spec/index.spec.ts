@@ -4,26 +4,17 @@ import {DNSError, SOARecord} from "../src/dns.js";
 const expect = chai.expect;
 
 import expected from "./expected.js";
+import {cmp} from "./common.js";
+import {RecordType} from "../src/constants";
 
-function cmp(expected: any[] | SOARecord, result: any[] | SOARecord, keys: string[]): void {
-    if (keys) {
-        if (Array.isArray(result)) {
-            for (const record of expected as any[]) {
-                expect(result.some(r => keys.every((c: string) => r[c] === record[c]))).to.be.true;
-            }
-        } else {
-            expect(keys.every((c: "nsname" | "hostmaster" | "refresh" | "minttl" | "expire" | "retry") => result[c] === (expected as SOARecord[])[0][c])).to.be.true;
-        }
-    } else {
-        expect(expected).to.be.eql(result);
-    }
-}
 
-function test(f: (host: string, cb: (err?: DNSError, addresses?: any[])=>void)=>void, rrval: string): void {
+function test(f: (host: string, cb: (err?: DNSError, addresses?: any[])=>void)=>void, rrval: keyof typeof RecordType | 'ANY'): void {
     const e = expected[rrval];
     it(`should resolve ${rrval} records from ${e.host}`, function (done) {
         function cb(err?: DNSError, addresses?: any[]) {
             try {
+                if (!Array.isArray(addresses)) addresses = [addresses] as any[];
+                addresses.sort();
                 expect(err).to.be.undefined;
                 cmp(e.records, addresses, e.cmp);
                 done();
@@ -39,17 +30,17 @@ describe('dns', function() {
     describe('lookup', function () {
         type Options = 4 | 6 | { family: 4 | 6 | 0, hints?: number, all?: boolean, verbatim?: boolean };
         [
-            {name: 'no options', hostname: expected.A.host, options: undefined, address: expected.A.records[0], family: 4},
-            {name: '4', hostname: expected.A.host, options: 4, address: expected.A.records[0], family: 4},
-            {name: '{family: 4}', hostname: expected.A.host, options: {family: 4}, address: expected.A.records[0], family: 4},
-            {name: '6', hostname: expected.AAAA.host, options: 6, address: expected.AAAA.records[0], family: 6},
-            {name: '{family: 6}', hostname: expected.AAAA.host, options: {family: 6}, address: expected.AAAA.records[0], family: 6},
+            {name: 'no options', hostname: expected.A.host, options: undefined, address: expected.A.records, family: 4},
+            {name: '4', hostname: expected.A.host, options: 4, address: expected.A.records, family: 4},
+            {name: '{family: 4}', hostname: expected.A.host, options: {family: 4}, address: expected.A.records, family: 4},
+            {name: '6', hostname: expected.AAAA.host, options: 6, address: expected.AAAA.records, family: 6},
+            {name: '{family: 6}', hostname: expected.AAAA.host, options: {family: 6}, address: expected.AAAA.records, family: 6},
         ].forEach(function (test) {
             it(`should return ipv${test.family} of ${test.hostname} given ${test.name}`, function(done){
                 function cb(err?: DNSError, address?: string, family?: number) {
                     try {
                         expect(err).to.be.undefined;
-                        expect(address).to.equal(test.address);
+                        expect(address).to.oneOf(test.address);
                         expect(family).to.equal(test.family);
                         done();
                     } catch (e) {
@@ -79,10 +70,12 @@ describe('dns', function() {
             {hostname: expected.A.host, rrval: undefined, result: expected.A.records},
             {hostname: expected.A.host, rrval: 'ANY', result: [], pending: true},
             ...Object.entries(expected).map(([rrval, v]: [string, {host: string, records: any[], cmp?: string[], pending?:boolean}])=>({hostname: v.host, rrval, result: v.records, cmp:v.cmp, pending:v.pending}))
-        ].forEach(function (test: {hostname: string, rrval: string, result: any[] | SOARecord, cmp?:string[], pending?:boolean}) {
+        ].forEach(function (test: {hostname: string, rrval: string, result: any[], cmp?:string[], pending?:boolean}) {
             it(`should resolve ${test.rrval || 'A'} records for ${test.hostname} given rrval: ${test.rrval}`, test.pending ? undefined : function (done) {
-                function cb(err?: DNSError, records?: any[] | SOARecord[]) {
+                function cb(err?: DNSError, records?: any[] | SOARecord) {
                     try {
+                        if (!Array.isArray(records)) records = [records] as any[];
+                        records.sort();
                         expect(err).to.be.undefined;
                         if (test.cmp) {
                             cmp(test.result, records, test.cmp);
@@ -130,11 +123,12 @@ describe('dns', function() {
             it(`should resolve AAAA records for ${test.hostname} with ttl: ${test.options && test.options.ttl}`, function(done){
                 function cb(err?: DNSError, addresses?: string[] | {address: string, ttl: boolean}[]) {
                     try {
+                        addresses.sort();
                         expect(err).to.be.undefined;
                         if (test.options && test.options.ttl) {
                             addresses = (addresses as {address: string, ttl: boolean}[]).map(a=>{expect(a.ttl).to.be.an('number'); return a.address});
                         }
-                        expect(addresses).to.eql(test.result);
+                        expect(addresses).to.have.members(test.result);
                         done();
                     } catch (e) {
                         done(e);
