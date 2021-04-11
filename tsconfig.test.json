@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
+    "module": "es6",
     "target": "es6"
   },
-  "include": ["spec/nodejs.spec.ts"]
+  "include": ["spec/index.spec.ts", "spec/rfc8484.spec.ts"]
 }
