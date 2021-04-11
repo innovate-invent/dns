@@ -16,6 +16,9 @@
   "type": "module",
   "types": "dist/index.d.ts",
   "keywords": ["nodejs", "browserify", "dns", "DoH", "RFC8484", "RFC1035"],
+  "files": [
+    "dist/"
+  ],
   "scripts": {
     "prebuild": "npm run clean && npm run lint",
     "build": "rollup -c",
