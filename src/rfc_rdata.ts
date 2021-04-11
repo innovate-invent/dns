@@ -107,11 +107,17 @@ rdata.set(RecordType.OPENPGPKEY, 'opaque');
 rdata.set(RecordType.CSYNC, {SOA_serial: 'u32', flags: 'u16', type_bit_map: 'opaque'});
 rdata.set(RecordType.ZONEMD, 'opaque');
 rdata.set(RecordType.SVCB, {priority: 'u16', domainname: DOMAINNAME, values: (d: Tokenizer)=>{
-    const vals = {} as Record<string, string>;
+    const vals = {} as Record<string, string[]>;
     for (let next = d.next('u16'); !next.done; next = d.next('u16')) {
         const key = next.value as number;
-        const len = d.next('u16').value as number;
-        const val = d.next(`string[${len}]`).value as string;
+        let len = d.next('u16').value as number;
+        const val: string[] = [];
+        while (len > 0) {
+            const v = d.next('string').value as string;
+            len -= v.length + 1;
+            val.push(v);
+        }
+        // const val = d.next(`string[${len}]`).value as string;
         switch (key) {
             case 1:
                 vals.alpn = val;
@@ -179,7 +185,7 @@ export default function parse(d: Tokenizer, type: RecordType.A): IP4ADDR;
 export default function parse(d: Tokenizer, type: RecordType.AAAA): IP6ADDR;
 export default function parse(d: Tokenizer, type: RecordType.SOA): {MNAME: string[], RNAME: string[], SERIAL: number, REFRESH: number, RETRY: number, EXPIRE: number, MINIMUM: number};
 export default function parse(d: Tokenizer, type: RecordType.NS|RecordType.MD|RecordType.MF|RecordType.CNAME|RecordType.SOA|RecordType.MB|RecordType.MG|RecordType.MR|RecordType.PTR|RecordType.TXT|RecordType.DNAME|RecordType.SPF): string[];
-export default function parse(d: Tokenizer, type: RecordType.NULL|RecordType.X25|RecordType.NSAP|RecordType['NSAP-PTR']): string;
+export default function parse(d: Tokenizer, type: RecordType.NULL|RecordType.X25|RecordType.NSAP): string;
 export default function parse(d: Tokenizer, type: RecordType.WKS): {ADDRESS: IP4ADDR, PROTOCOL: number, BITMAP: OPAQUE};
 export default function parse(d: Tokenizer, type: RecordType.HINFO): {CPU: string, OS: string};
 export default function parse(d: Tokenizer, type: RecordType.MINFO): {RMAILBX: DOMAINNAME, EMAILBX: DOMAINNAME};
@@ -209,11 +215,12 @@ export default function parse(d: Tokenizer, type: RecordType.NSEC3): {hash_algor
 export default function parse(d: Tokenizer, type: RecordType.NSEC3PARAM): {hash_algorithm: number, flags: number, iterations: number, salt: string};
 export default function parse(d: Tokenizer, type: RecordType.TLSA|RecordType.SMIMEA): {cert_usage: number, selector: number, matching_type: number, cert_assoc_data: OPAQUE};
 export default function parse(d: Tokenizer, type: RecordType.CSYNC): {SOA_serial: number, flags: number, type_bit_map: OPAQUE};
-export default function parse(d: Tokenizer, type: RecordType.SVCB|RecordType.HTTPSSVC): {priority: number, domainname: DOMAINNAME, values: {alpn?: string, port?: string, esnikeys?: string, ipv4hint?: string, ipv6hint?: string, [key: string]: string}};
+export default function parse(d: Tokenizer, type: RecordType.SVCB|RecordType.HTTPSSVC): {priority: number, domainname: DOMAINNAME, values: Record<'alpn'|'port'|'esnikeys'|'ipv4hint'|'ipv6hint'|string, string[]>};
 export default function parse(d: Tokenizer, type: RecordType.EUI48): [number, number, number, number, number, number];
 export default function parse(d: Tokenizer, type: RecordType.TSIG): {algorithm_name: DOMAINNAME, time_signed_upper: number, time_signed: number, fudge: number, MAC: number[], original_id: number, error: number, other_len: number, other_data: OPAQUE};
 export default function parse(d: Tokenizer, type: RecordType.URI): {priority: number, weight: number, target: string};
 export default function parse(d: Tokenizer, type: RecordType.CAA): {flags: number, tag: string, value: string};
+export default function parse(d: Tokenizer, type: RecordType): any;
 export default function parse(d: Tokenizer, type: RecordType): any {
     return parseToken(d, rdata.get(type) || 'opaque');
 }

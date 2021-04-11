@@ -108,7 +108,7 @@ export const extendedTypes = {
                     ""
                 ],
                 "values": {
-                    "alpn": 6
+                    "alpn": ["h3", "h2"]
                 }
             },
             {
