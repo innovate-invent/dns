@@ -105,7 +105,7 @@ rdata.set(RecordType.SVCB, {priority: 'u16', domainname: DOMAINNAME, values: (d:
     for (let next = d.next('u16'); !next.done; next = d.next('u16')) {
         const key = next.value as number;
         const len = d.next('u16').value as number;
-        const val = d.next(len).value as string;
+        const val = d.next(`string[${len}]`).value as string;
         switch (key) {
             case 1:
                 vals.alpn = val;

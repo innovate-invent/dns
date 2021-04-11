@@ -180,7 +180,7 @@ const record = {
 //                     the RDATA field is a 4 octet ARPA Internet address.
 } as Record<keyof ResponseRecord, TokenType>;
 
-export type TokenType = 's16'|'u8'|'u16'|'string'|'u32'|'string[]'|'string[*]'|'u3'|'u4'|'bit'|'opaque'|number;
+export type TokenType = 's16'|'u8'|'u16'|'string'|'u32'|'string[]'|'string[*]'|string|'u3'|'u4'|'bit'|'opaque'|number;
 export type TokenVal = number|string|string[]|ArrayBuffer|undefined;
 export type Tokenizer = Generator<TokenVal, undefined, TokenType>;
 
@@ -286,6 +286,10 @@ export function* decode(data: ArrayBuffer, start: number = 0, end?: number): Tok
             default:
                 if (typeof type === 'number') {
                     len = type * 8;
+                } else if (typeof type === 'string' && (type as string).startsWith('string[')) {
+                    len = parseInt((type as string).substring(7, (type as string).length-1));
+                    val = String.fromCodePoint(...new Uint8Array(data.slice(byteOffset + start, byteOffset + start + len)));
+                    len *= 8;
                 } else throw Error('Unknown token type');
 
         }
