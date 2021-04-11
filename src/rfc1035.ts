@@ -296,7 +296,7 @@ export function* deserialize(data: ArrayBuffer, start: number = 0, end?: number)
                 if (typeof type === 'number') {
                     len = type * 8;
                 } else if (typeof type === 'string' && (type as string).startsWith('string[')) {
-                    len = parseInt((type as string).substring(7, (type as string).length-1));
+                    len = parseInt((type as string).substring(7, (type as string).length-1), 10);
                     val = String.fromCodePoint(...new Uint8Array(data.slice(byteOffset + start, byteOffset + start + len)));
                     len *= 8;
                 } else throw Error('Unknown token type');
