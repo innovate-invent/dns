@@ -1,4 +1,4 @@
-# dns
+# @i2labs/dns
 Dependency free, browser compatible, NodeJS dns library replacement. Implements RFC8484 and RFC1035.
 Supports most DNS over HTTPS servers.
 
@@ -42,6 +42,29 @@ All methods exported by the library use the RFC8484 resolver. Instantiate a reso
 provider submodule to use that provider. `class Resolver` implementations export `lookup` and `lookupService` in
 addition to the methods defined in the [NodeJS dns documentation](https://nodejs.org/api/dns.html).
 
+# Use
+
+```js
+import * as dns from 'dns'
+dns.promises.resolve('example.i2labs.ca').then(result=>console.log(result))
+```
+
+### Webpack
+
+```js
+// webpack.config.js
+module.exports = {
+    alias: {
+        'dns': '@i2labs/dns'
+    }
+}
+```
+
+### Browserify
+
+```shell script
+browserify -r '@i2labs/dns:dns' ...
+```
 
 ## Alternatives
 
