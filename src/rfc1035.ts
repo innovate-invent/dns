@@ -184,7 +184,16 @@ export type TokenType = 's16'|'u8'|'u16'|'string'|'u32'|'string[]'|'string[*]'|s
 export type TokenVal = number|string|string[]|ArrayBuffer|undefined;
 export type Tokenizer = Generator<TokenVal, undefined, TokenType>;
 
-export function* decode(data: ArrayBuffer, start: number = 0, end?: number): Tokenizer {
+/**
+ * Deserialize binary RFC1035 wire format
+ * Returns a Generator that accepts 's16'|'u8'|'u16'|'string'|'u32'|'string[]'|'string[*]'|'u3'|'u4'|'bit'|'opaque'|number as a parameter
+ * The generator will consume bytes and yield the related native type.
+ * Pass undefined to yield the current byte offset, or a number to advance the byte offset by the value number of bytes.
+ * @param data buffer populated with data to deserialize
+ * @param start buffer start offset
+ * @param end buffer end offset
+ */
+export function* deserialize(data: ArrayBuffer, start: number = 0, end?: number): Tokenizer {
     const view = new DataView(data, start, end && end - start);
     let ptrView;
     let len = 0;
@@ -298,6 +307,7 @@ export function* decode(data: ArrayBuffer, start: number = 0, end?: number): Tok
     return;
 }
 // TODO implement https://tools.ietf.org/html/rfc1035#section-2.3.4
+// TODO support truncated responses
 
 function setString(view: DataView, val: string) {
     let len = 0;
@@ -307,7 +317,13 @@ function setString(view: DataView, val: string) {
     }
 }
 
-export function* encode(data: ArrayBuffer): Generator<number, undefined, [TokenType, TokenVal]> {
+/**
+ * Serialize binary RFC1035 wire format
+ * Returns a Generator that accepts tuples of ('s16'|'u8'|'u16'|'string'|'u32'|'string[]'|'string[*]'|'u3'|'u4'|'bit'|'opaque', number|string|string[]|ArrayBuffer) as a parameter
+ * The generator will convert the second tuple value to the binary representation specified in the first tuple value
+ * @param data buffer to populate
+ */
+export function* serialize(data: ArrayBuffer): Generator<number, undefined, [TokenType, TokenVal]> {
     const view = new DataView(data);
     let len = 0;
     for (let bitOffset = 0; bitOffset < view.byteLength * 8; bitOffset += len) {
@@ -401,7 +417,7 @@ export function buildRequest(questions: Question[], recursive: boolean = true): 
         + (questions.length * 4) // Bytes for QTYPE+QCLASS
         + questions.reduce((acc, q)=>acc + q.QNAME.length + q.QNAME.reduce((a,c)=>a+c.length, 0) + ( q.QNAME[q.QNAME.length-1].length === 0 ? 0 : 1 ), 0); // Bytes required for QNAMEs
     const buf = new ArrayBuffer(totalLen);
-    const encoder = encode(buf);
+    const encoder = serialize(buf);
     encoder.next();
     const head = {ID: 0, QR: 0, Opcode: 0, AA: 0, TC: 0, RD: recursive ? 1 : 0, QDCOUNT: questions.length} as Header;
     for (const [token, type] of Object.entries(header) as [keyof Header, TokenType][]) encoder.next([type, head[token] || 0]);
@@ -420,7 +436,7 @@ export interface Response {
 }
 
 export function parseResponse(data: ArrayBuffer): Response {
-    const decoder = decode(data);
+    const decoder = deserialize(data);
     decoder.next();
     const response: Response = {header: {} as Header, question: [], answer: [], authority: [], additional: []};
     // Header
@@ -442,7 +458,7 @@ export function parseResponse(data: ArrayBuffer): Response {
             const end = byteOffset + r.RDLENGTH;
             if (end > data.byteLength) throw Error(`RDLENGTH extends past end of received data`);
             decoder.next(r.RDLENGTH); // Advance by RDLENGTH
-            const rdataDecoder = decode(data, byteOffset, end);
+            const rdataDecoder = deserialize(data, byteOffset, end);
             rdataDecoder.next();
             r.RDATA = RDATA(rdataDecoder, r.TYPE);
             (category as ResponseRecord[]).push(r);
