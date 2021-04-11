@@ -1,11 +1,17 @@
 import {RecordType} from "./constants.js";
 import {Tokenizer, TokenType} from "./rfc1035.js";
 
-function IP4ADDR(d: Tokenizer): number[] {return (new Array(4)).fill(undefined).map(x=>Number(d.next('u8').value));}
-function IP6ADDR(d: Tokenizer): number[] {return (new Array(8)).fill(undefined).map(x=>Number(d.next('u16').value));}
+type IP4ADDR = [number, number, number, number];
+type IP6ADDR = [number, number, number, number, number, number, number, number];
+
+function IP4ADDR(d: Tokenizer): IP4ADDR {return (new Array(4)).fill(undefined).map(x=>Number(d.next('u8').value)) as IP4ADDR;}
+function IP6ADDR(d: Tokenizer): IP6ADDR {return (new Array(8)).fill(undefined).map(x=>Number(d.next('u16').value)) as IP6ADDR;}
 function EXP(d: Tokenizer): number {return d.next('u4').value as number * Math.pow(10, d.next('u4').value as number);}
 
-const DOMAINNAME = 'string[]'
+type OPAQUE = ArrayBuffer;
+type DOMAINNAME = string[];
+const DOMAINNAME = 'string[]';
+
 
 type _RRDataLayout = ((d: Tokenizer)=>any)|TokenType[]|TokenType;
 type RRDataLayout = _RRDataLayout|{[key: string]: _RRDataLayout};
@@ -68,7 +74,7 @@ rdata.set(RecordType.APL, {ADDRESSFAMILY: 'u16', PREFIX: 'u8', N: 'bit', AFDLENG
 rdata.set(RecordType.DS, {key_tag: 'u16', algorithm: 'u8', digest_type: 'u8', digest: 'opaque'});
 rdata.set(RecordType.SSHFP, {algorithm: 'u8', fp_type: 'u8', fingerprint: 'opaque'});
 rdata.set(RecordType.IPSECKEY, (d: Tokenizer)=>{
-    const v={precedence: d.next('u8').value, gateway_type: d.next('u8').value, algorithm: d.next('u8').value} as {precedence: number, gateway_type: number, algorithm: number, gateway?: string|string[]|number[], public_key: Uint8Array};
+    const v={precedence: d.next('u8').value, gateway_type: d.next('u8').value, algorithm: d.next('u8').value} as {precedence: number, gateway_type: number, algorithm: number, gateway?: IP4ADDR|IP6ADDR|DOMAINNAME, public_key: OPAQUE};
     switch (v.gateway_type) {
         case 1:
             v.gateway = IP4ADDR(d);
@@ -77,10 +83,10 @@ rdata.set(RecordType.IPSECKEY, (d: Tokenizer)=>{
             v.gateway = IP6ADDR(d);
             break;
         case 3:
-            v.gateway = d.next(DOMAINNAME).value as string[];
+            v.gateway = d.next(DOMAINNAME).value as DOMAINNAME;
             break;
     }
-    v.public_key = d.next('opaque').value as Uint8Array;
+    v.public_key = d.next('opaque').value as OPAQUE;
     return v;
 });
 rdata.set(RecordType.RRSIG, rdata.get(RecordType.SIG));
@@ -169,6 +175,45 @@ function parseToken(d: Tokenizer, layout: RRDataLayout): any {
     }
 }
 
+export default function parse(d: Tokenizer, type: RecordType.A): IP4ADDR;
+export default function parse(d: Tokenizer, type: RecordType.AAAA): IP6ADDR;
+export default function parse(d: Tokenizer, type: RecordType.SOA): {MNAME: string[], RNAME: string[], SERIAL: number, REFRESH: number, RETRY: number, EXPIRE: number, MINIMUM: number};
+export default function parse(d: Tokenizer, type: RecordType.NS|RecordType.MD|RecordType.MF|RecordType.CNAME|RecordType.SOA|RecordType.MB|RecordType.MG|RecordType.MR|RecordType.PTR|RecordType.TXT|RecordType.DNAME|RecordType.SPF): string[];
+export default function parse(d: Tokenizer, type: RecordType.NULL|RecordType.X25|RecordType.NSAP|RecordType['NSAP-PTR']): string;
+export default function parse(d: Tokenizer, type: RecordType.WKS): {ADDRESS: IP4ADDR, PROTOCOL: number, BITMAP: OPAQUE};
+export default function parse(d: Tokenizer, type: RecordType.HINFO): {CPU: string, OS: string};
+export default function parse(d: Tokenizer, type: RecordType.MINFO): {RMAILBX: DOMAINNAME, EMAILBX: DOMAINNAME};
+export default function parse(d: Tokenizer, type: RecordType.MX): {PREFERENCE: string, EXCHANGE: DOMAINNAME};
+export default function parse(d: Tokenizer, type: RecordType.RP): {mbox: DOMAINNAME, txt: DOMAINNAME};
+export default function parse(d: Tokenizer, type: RecordType.AFSDB): {subtype: string, hostname: DOMAINNAME};
+export default function parse(d: Tokenizer, type: RecordType.ISDN): {address: string, sa?: string};
+export default function parse(d: Tokenizer, type: RecordType.RT): {preference: string, 'intermediate-host': DOMAINNAME};
+export default function parse(d: Tokenizer, type: RecordType.SIG|RecordType.RRSIG): {type_covered: number, algorithm: number, labels: number, original_ttl: number, sig_expiration: number, sig_inception: number, key_tag: number, signer: DOMAINNAME, signature: OPAQUE};
+export default function parse(d: Tokenizer, type: RecordType.KEY|RecordType.DNSKEY|RecordType.CDNSKEY): {flags: number, protocol: number, algorithm: number, public_key: OPAQUE};
+export default function parse(d: Tokenizer, type: RecordType.PX): {PREFERENCE: number, MAP822: DOMAINNAME, MAPX400: DOMAINNAME};
+export default function parse(d: Tokenizer, type: RecordType.GPOS): {LONGITUDE: string, LATITUDE: string, ALTITUDE: string};
+export default function parse(d: Tokenizer, type: RecordType.LOC): {VERSION: number, SIZE: number, HORIZ_PRE: number, VERT_PRE: number, LATITUDE: number, LONGITUDE: number, ALTITUDE: number, size: number, horiz_pre: number, vert_pre: number, latitude: {d: number, m: number, s: number, ns: string}, longitude: {d: number, m: number, s: number, ew: string}, altitude: number};
+export default function parse(d: Tokenizer, type: RecordType.NXT|RecordType.NSEC): {next_domain_name: DOMAINNAME, type_bit_map: OPAQUE};
+export default function parse(d: Tokenizer, type: RecordType.EID|RecordType.NIMLOC|RecordType.ATMA|RecordType.A6|RecordType.DHCID|RecordType.HIP|RecordType.NINFO|RecordType.RKEY|RecordType.TALINK|RecordType.OPENPGPKEY|RecordType.ZONEMD|RecordType.UINFO|RecordType.UID|RecordType.GID|RecordType.UNSPEC|RecordType.NID|RecordType.L32|RecordType.L64|RecordType.LP|RecordType.EUI64|RecordType.AVC|RecordType.DOA|RecordType.AMTRELAY|RecordType.TA|RecordType.DLV): OPAQUE;
+export default function parse(d: Tokenizer, type: RecordType.SRV): {priority: number, weight: number, port: number, target: DOMAINNAME};
+export default function parse(d: Tokenizer, type: RecordType.NAPTR): {ORDER: number, PREFERENCE: number, FLAGS: string, SERVICES: string, REGEXP: string, REPLACEMENT: DOMAINNAME};
+export default function parse(d: Tokenizer, type: RecordType.KX): {PREFERENCE: number, EXCHANGER: DOMAINNAME};
+export default function parse(d: Tokenizer, type: RecordType.CERT): {type: number, key_tag: number, algorithm: number, certificate: OPAQUE};
+export default function parse(d: Tokenizer, type: RecordType.SINK): {coding: number, subcoding: number, data: OPAQUE};
+export default function parse(d: Tokenizer, type: RecordType.OPT): {code: number, length: number, data: OPAQUE};
+export default function parse(d: Tokenizer, type: RecordType.APL): {ADDRESSFAMILY: number, PREFIX: number, N: number, AFDLENGTH: number, AFDPART: OPAQUE};
+export default function parse(d: Tokenizer, type: RecordType.DS|RecordType.CDS): {key_tag: number, algorithm: number, digest_type: number, digest: OPAQUE};
+export default function parse(d: Tokenizer, type: RecordType.SSHFP): {algorithm: number, fp_type: number, fingerprint: OPAQUE};
+export default function parse(d: Tokenizer, type: RecordType.IPSECKEY): {precedence: number, gateway_type: number, algorithm: number, gateway?: IP4ADDR|IP6ADDR|DOMAINNAME, public_key: OPAQUE};
+export default function parse(d: Tokenizer, type: RecordType.NSEC3): {hash_algorithm: number, flags: number, iterations: number, salt: string, next_hashed_owner_name: string, type_bit_map: OPAQUE};
+export default function parse(d: Tokenizer, type: RecordType.NSEC3PARAM): {hash_algorithm: number, flags: number, iterations: number, salt: string};
+export default function parse(d: Tokenizer, type: RecordType.TLSA|RecordType.SMIMEA): {cert_usage: number, selector: number, matching_type: number, cert_assoc_data: OPAQUE};
+export default function parse(d: Tokenizer, type: RecordType.CSYNC): {SOA_serial: number, flags: number, type_bit_map: OPAQUE};
+export default function parse(d: Tokenizer, type: RecordType.SVCB|RecordType.HTTPSSVC): {priority: number, domainname: DOMAINNAME, values: {alpn?: string, port?: string, esnikeys?: string, ipv4hint?: string, ipv6hint?: string, [key: string]: string}};
+export default function parse(d: Tokenizer, type: RecordType.EUI48): [number, number, number, number, number, number];
+export default function parse(d: Tokenizer, type: RecordType.TSIG): {algorithm_name: DOMAINNAME, time_signed_upper: number, time_signed: number, fudge: number, MAC: number[], original_id: number, error: number, other_len: number, other_data: OPAQUE};
+export default function parse(d: Tokenizer, type: RecordType.URI): {priority: number, weight: number, target: string};
+export default function parse(d: Tokenizer, type: RecordType.CAA): {flags: number, tag: string, value: string};
 export default function parse(d: Tokenizer, type: RecordType): any {
     return parseToken(d, rdata.get(type) || 'opaque');
 }

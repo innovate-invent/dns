@@ -146,7 +146,7 @@ const question = {
                     // For example, the QCLASS field is IN for the Internet.
 } as Record<keyof Question, TokenType>;
 
-interface ResponseRecord {
+export interface ResponseRecord {
     NAME: string,
     TYPE: RecordType,
     CLASS: CLASS,
@@ -411,7 +411,7 @@ export function buildRequest(questions: Question[], recursive: boolean = true): 
     return buf;
 }
 
-interface Response {
+export interface Response {
     header: Header,
     question: Question[],
     answer: ResponseRecord[],
