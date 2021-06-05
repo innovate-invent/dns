@@ -10,6 +10,8 @@ export interface Header {
     RD: 0|1,
     RA: 0|1,
     Z?: undefined,
+    AD: 0|1,
+    CD: 0|1,
     RCODE?: 0|1|2|3|4|5, // TODO create enum
     QDCOUNT: number,
     ANCOUNT?: number,
