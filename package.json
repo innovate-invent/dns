@@ -25,7 +25,8 @@
     "build:test": "npm run build && tsc -p tsconfig.test.json",
     "lint": "tslint src/*.ts",
     "clean": "rm -rf dist",
-    "test": "ts-mocha -p tsconfig.node.json spec/nodejs.spec.ts"
+    "test": "ts-mocha -p tsconfig.node.json spec/nodejs.spec.ts",
+    "publish": "npm publish --access public"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "^18.0.0",
