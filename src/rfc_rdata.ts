@@ -224,3 +224,15 @@ export default function parse(d: Tokenizer, type: RecordType): any;
 export default function parse(d: Tokenizer, type: RecordType): any {
     return parseToken(d, rdata.get(type) || 'opaque');
 }
+
+/**
+ * Calculates a key_tag value for a given certificate for the CERT record
+ * @param certificate Buffer containing certificate data
+ * @return key_tag that helps identify certificate record (not unique)
+ */
+export function key_tag(certificate: ArrayBuffer): number {
+    const tag = (new Uint8Array(certificate)).reduce((acc, cur, i)=>{
+        return acc + (i & 1 ? cur : cur << 8);
+    }, 0);
+    return (((tag >>> 16) & 0xFFFF) + tag) & 0xFFFF;
+}
