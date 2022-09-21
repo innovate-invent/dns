@@ -1,7 +1,5 @@
 import {promises} from 'dns';
 
-import {SOARecord} from "../src/dns.js";
-
 import {expect} from 'chai';
 // @ts-ignore
 global.chai = {expect};

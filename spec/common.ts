@@ -1,5 +1,3 @@
-import {SOARecord} from "../src/dns";
-
 const expect = chai.expect;
 
 export function cmp(expected: any[], result: any[], keys: string[]): void {

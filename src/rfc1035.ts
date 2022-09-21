@@ -1,10 +1,10 @@
 import {RecordType} from "./constants.js";
-import RDATA from "./rfc_rdata.js"
+import RDATA, {RDATA as RDATATypes} from "./rfc_rdata.js"
 
 export interface Header {
     ID: number,
     QR: 0|1,
-    Opcode: 0|1|2,
+    Opcode: 0|1|2|4|5,
     AA: 0|1,
     TC: 0|1,
     RD: 0|1,
@@ -12,7 +12,7 @@ export interface Header {
     Z?: undefined,
     AD: 0|1,
     CD: 0|1,
-    RCODE?: 0|1|2|3|4|5, // TODO create enum
+    RCODE?: 0|1|2|3|4|5|6|7|8|9|10|16|17|18|19|20|21|22, // TODO create enum https://www.rfc-editor.org/rfc/rfc6895.html#section-2.3
     QDCOUNT: number,
     ANCOUNT?: number,
     NSCOUNT?: number,
@@ -28,13 +28,17 @@ const header = {
     QR: 'bit',  // A one bit field that specifies whether this message is a
                 // query (0), or a response (1).
 
-    Opcode: 'u4',   // A four bit field that specifies kind of query in this
+    Opcode: 'u4',   // https://www.rfc-editor.org/rfc/rfc6895.html#section-2.2
+                    // A four bit field that specifies kind of query in this
                     // message.  This value is set by the originator of a query
                     // and copied into the response.  The values are:
                     // 0               a standard query (QUERY)
                     // 1               an inverse query (IQUERY)
                     // 2               a server status request (STATUS)
-                    // 3-15            reserved for future use
+                    // 3               Unassigned
+                    // 4               Notify https://www.rfc-editor.org/rfc/rfc1996
+                    // 5               Update https://www.rfc-editor.org/rfc/rfc2136
+                    // 6-15            reserved for future use
 
     AA: 'bit',  // Authoritative Answer - this bit is valid in responses,
                 // and specifies that the responding name server is an
@@ -45,7 +49,7 @@ const header = {
                 // corresponds to the name which matches the query name, or
                 // the first owner name in the answer section.
 
-    TC: 'bit',  // TrunCation - specifies that this message was truncated
+    TC: 'bit',  // Truncation - specifies that this message was truncated
                 // due to length greater than that permitted on the
                 // transmission channel.
 
@@ -58,13 +62,14 @@ const header = {
                 // response, and denotes whether recursive query support is
                 // available in the name server.
 
-    Z: 'u3',   // Reserved for future use.  Must be zero in all queries
-                // and responses.
+    Z: 'bit',   // Reserved for future use.  Must be zero in all queries
+                // and responses. https://www.rfc-editor.org/rfc/rfc6895.html#section-2
 
     AD: 'bit',  // Authenticated data, used by DNSSEC
     CD: 'bit',  // Checking Disabled, used by DNSSEC
 
-    RCODE: 'u4',// Response code - this 4 bit field is set as part of
+    RCODE: 'u4',// https://www.rfc-editor.org/rfc/rfc6895.html#section-2.3
+                // Response code - this 4 bit field is set as part of
                 // responses.  The values have the following
                 // interpretation:
                 //
@@ -131,7 +136,7 @@ export class Question {
     }
 }
 
-const question = {
+export const question = {
     QNAME: 'string[]',  // a domain name represented as a sequence of labels, where
                         // each label consists of a length octet followed by that
                         // number of octets.  The domain name terminates with the
@@ -148,16 +153,21 @@ const question = {
                     // For example, the QCLASS field is IN for the Internet.
 } as Record<keyof Question, TokenType>;
 
-export interface ResponseRecord {
-    NAME: string,
-    TYPE: RecordType,
+export interface ResponseRecord<T extends keyof RDATATypes> {
+    NAME: string[],
+    TYPE: T,
     CLASS: CLASS,
     TTL: number,
     RDLENGTH: number,
-    RDATA: any,
+    RDATA?: RDATATypes[T],
+    raw_rdata?: ArrayBuffer,
 }
 
-const record = {
+export type AnswerRecord<T extends keyof RDATATypes> = ResponseRecord<T>;
+export type AuthorityRecord<T extends keyof RDATATypes> = ResponseRecord<T>;
+export type AdditionalRecord<T extends keyof RDATATypes> = ResponseRecord<T>;
+
+export const record = {
     NAME: 'string[]', // a domain name to which this resource record pertains.
 
     TYPE: 'u16',    // two octets containing one of the RR type codes.  This
@@ -180,15 +190,77 @@ const record = {
 //                     according to the TYPE and CLASS of the resource record.
 //                     For example, the if the TYPE is A and the CLASS is IN,
 //                     the RDATA field is a 4 octet ARPA Internet address.
-} as Record<keyof ResponseRecord, TokenType>;
+} as Record<keyof Omit<ResponseRecord<any>, "RDATA">, TokenType>;
+
+export interface Edns0Opt {
+    NAME: string[],
+    TYPE: RecordType.OPT,
+    UDPPAYLOADSIZE: number,
+    ERCODE: number,
+    VERSION: 0,
+    DO: number,
+    Z: undefined,
+    RDLENGTH: number,
+    RDATA?: any,
+}
+export let UDPPAYLOADSIZE = 4096;
+
+const edns0Opt = {
+    // https://datatracker.ietf.org/doc/html/rfc2671
+    NAME: 'string[]', // empty (root domain)
+
+    TYPE: 'u16',  // OPT
+
+    UDPPAYLOADSIZE: 'u16',  // sender's UDP payload size
+
+    ERCODE: 'u8',   // EXTENDED-RCODE  Forms upper 8 bits of extended 12-bit RCODE.  Note
+                    // that EXTENDED-RCODE value "0" indicates that an
+                    // unextended RCODE is in use (values "0" through "15").
+
+    VERSION: 'u8',  // Indicates the implementation level of whoever sets
+                    // it.  Full conformance with this specification is
+                    // indicated by version "0."  Requestors are encouraged
+                    // to set this to the lowest implemented level capable
+                    // of expressing a transaction, to minimize the
+                    // responder and network load of discovering the
+                    // greatest common implementation level between
+                    // requestor and responder.  A requestor's version
+                    // numbering strategy should ideally be a run time
+                    // configuration option.
+                    // If a responder does not implement the VERSION level
+                    // of the request, then it answers with RCODE=BADVERS.
+                    // All responses will be limited in format to the
+                    // VERSION level of the request, but the VERSION of each
+                    // response will be the highest implementation level of
+                    // the responder.  In this way a requestor will learn
+                    // the implementation level of a responder as a side
+                    // effect of every response, including error responses,
+                    // including RCODE=BADVERS.
+
+    DO: 'bit',  // Setting the DO bit to one in a query indicates to the server that the
+                // resolver is able to accept DNSSEC security RRs.  The DO bit cleared
+                // (set to zero) indicates the resolver is unprepared to handle DNSSEC
+                // security RRs and those RRs MUST NOT be returned in the response
+                // (unless DNSSEC security RRs are explicitly queried for).  The DO bit
+                // of the query MUST be copied in the response.
+                // https://datatracker.ietf.org/doc/html/rfc3225
+
+    Z: 'u15',   // Set to zero by senders and ignored by receivers,
+                // unless modified in a subsequent specification.
+
+    RDLENGTH: 'u16',  // an unsigned 16 bit integer that specifies the length in
+                      // octets of the RDATA field.
+} as Record<keyof Edns0Opt, TokenType>;
+
+const Edns0OptLen = 11;
 
 export type TokenType = 's16'|'u8'|'u16'|'string'|'u32'|'string[]'|'string[*]'|string|'u3'|'u4'|'bit'|'opaque'|number;
-export type TokenVal = number|string|string[]|ArrayBuffer|undefined;
+export type TokenVal = number|string|string[]|ArrayBuffer|undefined|DataView;
 export type Tokenizer = Generator<TokenVal, undefined, TokenType>;
 
 /**
  * Deserialize binary RFC1035 wire format
- * Returns a Generator that accepts 's16'|'u8'|'u16'|'string'|'u32'|'string[]'|'string[*]'|'u3'|'u4'|'bit'|'opaque'|number as a parameter
+ * Returns a Generator that accepts 's16'|'u8'|'u16'|'string'|'u32'|'string[]'|'string[*]'|'u3'|'u4'|'bit'|'u15'|'opaque'|number as a parameter
  * The generator will consume bytes and yield the related native type.
  * Pass undefined to yield the current byte offset, or a number to advance the byte offset by the value number of bytes.
  * @param data buffer populated with data to deserialize
@@ -205,7 +277,7 @@ export function* deserialize(data: ArrayBuffer, start: number = 0, end?: number)
         len = 0;
         const byteOffset = Math.trunc(bitOffset / 8);
         const type = yield val;
-        switch (type) {
+        switch (type) { // TODO replace with Symbols
             case 's16':
                 val = view.getInt16(byteOffset);
                 // Currently all s16 values are byte aligned, no shifting required
@@ -230,6 +302,11 @@ export function* deserialize(data: ArrayBuffer, start: number = 0, end?: number)
                 // Only used by header Z field
                 val = undefined;
                 len = 3;
+                break;
+            case 'u15':
+                // Only used by OPT Z field
+                val = undefined;
+                len = 15;
                 break;
             case 'u4':
                 val = view.getUint16(byteOffset);
@@ -294,6 +371,9 @@ export function* deserialize(data: ArrayBuffer, start: number = 0, end?: number)
             case undefined:  // Return current byteOffset if no type provided
                 val = byteOffset;
                 break;
+            case 'view':
+                val = view;
+                break;
             default:
                 if (typeof type === 'number') {
                     len = type * 8;
@@ -302,7 +382,6 @@ export function* deserialize(data: ArrayBuffer, start: number = 0, end?: number)
                     val = String.fromCodePoint(...new Uint8Array(data.slice(byteOffset + start, byteOffset + start + len)));
                     len *= 8;
                 } else throw Error('Unknown token type');
-
         }
     }
     yield val;
@@ -321,7 +400,7 @@ function setString(view: DataView, val: string) {
 
 /**
  * Serialize binary RFC1035 wire format
- * Returns a Generator that accepts tuples of ('s16'|'u8'|'u16'|'string'|'u32'|'string[]'|'string[*]'|'u3'|'u4'|'bit'|'opaque', number|string|string[]|ArrayBuffer) as a parameter
+ * Returns a Generator that accepts tuples of ('s16'|'u8'|'u16'|'string'|'u32'|'string[]'|'string[*]'|'u3'|'u4'|'bit'|'u15'|'opaque', number|string|string[]|ArrayBuffer) as a parameter
  * The generator will convert the second tuple value to the binary representation specified in the first tuple value
  * @param data buffer to populate
  */
@@ -332,7 +411,7 @@ export function* serialize(data: ArrayBuffer): Generator<number, undefined, [Tok
         len = 0;
         let byteOffset = Math.trunc(bitOffset / 8);
         const [type, val] = yield byteOffset;
-        switch (type) {
+        switch (type) {  // TODO replace with Symbols
             case 's16':
                 if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
                 view.setInt16(byteOffset, val);
@@ -360,6 +439,10 @@ export function* serialize(data: ArrayBuffer): Generator<number, undefined, [Tok
             case 'u3':
                 // Only used by header Z field, no-op
                 len = 3;
+                break;
+            case 'u15':
+                // Used by OPT Z field, no-op
+                len = 15;
                 break;
             case 'u4':
                 if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
@@ -414,30 +497,61 @@ export function* serialize(data: ArrayBuffer): Generator<number, undefined, [Tok
     return;
 }
 
-export function buildRequest(questions: Question[], recursive: boolean = true): ArrayBuffer {
-    const totalLen = HeaderLen
-        + (questions.length * 4) // Bytes for QTYPE+QCLASS
-        + questions.reduce((acc, q)=>acc + q.QNAME.length + q.QNAME.reduce((a,c)=>a+c.length, 0) + ( q.QNAME[q.QNAME.length-1].length === 0 ? 0 : 1 ), 0); // Bytes required for QNAMEs
+/**
+ * Build DNS wireformat request
+ * @param questions Questions to include in request
+ * @param recursive Set the RD bit of the DNS request
+ * @param dnssec Enable client side DNSSEC validation
+ */
+export function buildRequest(questions: Question[], recursive: boolean = true, dnssec: boolean = false): ArrayBuffer {
+    const additional: AdditionalRecord<keyof RDATATypes>[] = [];
+    let totalLen = HeaderLen;
+    if (dnssec) {
+        totalLen += Edns0OptLen;
+        additional.push({NAME: [''], TYPE: RecordType.OPT, UDPPAYLOADSIZE, VERSION: 0, ERCODE: 0, DO: 1, RDLENGTH: 0, Z: undefined} as Edns0Opt as unknown as AdditionalRecord<RecordType.OPT>)
+    }
+
+    totalLen += (questions.length * 4) // Bytes for QTYPE+QCLASS
+    + questions.reduce((acc, q)=>acc + q.QNAME.length + q.QNAME.reduce((a,c)=>a+c.length, 0) + ( q.QNAME[q.QNAME.length-1].length === 0 ? 0 : 1 ), 0); // Bytes required for QNAMEs
+
     const buf = new ArrayBuffer(totalLen);
     const encoder = serialize(buf);
     encoder.next();
-    const head = {ID: 0, QR: 0, Opcode: 0, AA: 0, TC: 0, RD: recursive ? 1 : 0, QDCOUNT: questions.length} as Header;
+    const head = {ID: 0, QR: 0, Opcode: 0, AA: 0, TC: 0, RD: recursive ? 1 : 0, QDCOUNT: questions.length, ARCOUNT: dnssec?1:0} as Header;
     for (const [token, type] of Object.entries(header) as [keyof Header, TokenType][]) encoder.next([type, head[token] || 0]);
     for (const q of questions) {
         for (const [token, type] of Object.entries(question) as [keyof Question, TokenType][]) encoder.next([type, q[token]]);
     }
+    for (const a of additional) {
+        let tokens;
+        switch (a.TYPE) {
+            case RecordType.OPT:
+                tokens = Object.entries(edns0Opt);
+                break;
+            default:
+                tokens = Object.entries(question);
+                break;
+        }
+        for (const [token, type] of tokens as [keyof Omit<ResponseRecord<any>, "RDATA">, TokenType][]) encoder.next([type, a[token] as TokenVal]);
+    }
+
     return buf;
 }
 
 export interface Response {
     header: Header,
     question: Question[],
-    answer: ResponseRecord[],
-    authority: ResponseRecord[],
-    additional: ResponseRecord[],
+    answer: AnswerRecord<keyof RDATATypes>[],
+    authority: AuthorityRecord<keyof RDATATypes>[],
+    additional: AdditionalRecord<keyof RDATATypes>[],
 }
 
-export function parseResponse(data: ArrayBuffer): Response {
+/**
+ * Parse DNS wire format response
+ * @param data DNS response data in wire format
+ * @param keepRDATA include a 'raw_rdata' property in the ResponseRecords that holds a copy of the wire-formatted RDATA
+ */
+export function parseResponse(data: ArrayBuffer, keepRDATA: boolean = false): Response {
     const decoder = deserialize(data);
     decoder.next();
     const response: Response = {header: {} as Header, question: [], answer: [], authority: [], additional: []};
@@ -454,17 +568,36 @@ export function parseResponse(data: ArrayBuffer): Response {
     // answer, authority, additional
     for (const [count, category] of [[response.header.ANCOUNT, response.answer], [response.header.NSCOUNT, response.authority], [response.header.ARCOUNT, response.additional]]) {
         for (let i = 0; i < count; ++i) {
-            const r: ResponseRecord = {} as ResponseRecord;
-            for (const [token, type] of Object.entries(record) as [keyof ResponseRecord, TokenType][]) (r[token] as TokenVal) = decoder.next(type).value;
-            const byteOffset = decoder.next().value as number;
-            const end = byteOffset + r.RDLENGTH;
-            if (end > data.byteLength) throw Error(`RDLENGTH extends past end of received data`);
-            decoder.next(r.RDLENGTH); // Advance by RDLENGTH
-            const rdataDecoder = deserialize(data, byteOffset, end);
-            rdataDecoder.next();
-            r.RDATA = RDATA(rdataDecoder, r.TYPE);
-            (category as ResponseRecord[]).push(r);
+            const r: ResponseRecord<keyof RDATATypes> | Edns0Opt = {} as ResponseRecord<keyof RDATATypes>;
+            let tokens = Object.entries(record);
+            while (Object.keys(r).length < tokens.length) {
+                for (const [token, type] of tokens as [keyof Omit<ResponseRecord<any>, "RDATA">, TokenType][]) {
+                    if (token in r) continue; // Skip existing keys if looping back around from break
+                    (r[token] as TokenVal) = decoder.next(type).value;
+                    if (token === 'TYPE' && r[token] === RecordType.OPT) {
+                        tokens = Object.entries(edns0Opt);
+                        break;
+                    }
+                }
+            }
+            if ('ERCODE' in r) {
+                response.header.RCODE |= (r as Edns0Opt).ERCODE << 4;
+            }
+            if (r.RDLENGTH > 0) {
+                const byteOffset = decoder.next().value as number || 0;
+                const end = byteOffset + r.RDLENGTH;
+                if (end > data.byteLength) throw Error(`RDLENGTH extends past end of received data`);
+                decoder.next(r.RDLENGTH); // Advance by RDLENGTH
+                const rdataDecoder = deserialize(data, byteOffset, end);
+                rdataDecoder.next();
+                r.RDATA = RDATA<any>(rdataDecoder, r.TYPE);
+                r.raw_rdata = keepRDATA ? data.slice(byteOffset, end) : undefined;
+            } else {
+                r.RDATA = null;
+            }
+            (category as ResponseRecord<keyof RDATATypes>[]).push(r);
         }
     }
+    if (!decoder.next().done as boolean) throw Error(`Received data longer than expected`);
     return response;
 }

@@ -1,5 +1,5 @@
 import dns from '../src/index.js'
-import {DNSError, SOARecord} from "../src/dns.js";
+import {DNSError, ResolveOptions, SOARecord} from "../src/dns.js";
 
 const expect = chai.expect;
 
@@ -85,8 +85,9 @@ describe('dns', function() {
                         done(e);
                     }
                 }
-                if (test.rrval) dns.resolve(test.hostname, test.rrval, cb);
-                else dns.resolve(test.hostname, cb);
+                const optional: any[] = [];
+                if (test.rrval) optional.push(test.rrval);
+                dns.resolve(test.hostname, ...optional, cb);
             });
         });
     });

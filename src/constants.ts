@@ -95,6 +95,36 @@ export enum RecordType {
     // 'Reserved' = 65535,
 }
 
+/*
+                                Zone
+   Value Algorithm [Mnemonic]  Signing  References   Status
+   ----- -------------------- --------- ----------  ---------
+     0   reserved
+     1   RSA/MD5 [RSAMD5]         n      [RFC2537]  NOT RECOMMENDED
+     2   Diffie-Hellman [DH]      n      [RFC2539]   -
+     3   DSA/SHA-1 [DSA]          y      [RFC2536]  OPTIONAL
+     4   Elliptic Curve [ECC]              TBA       -
+     5   RSA/SHA-1 [RSASHA1]      y      [RFC3110]  MANDATORY
+   252   Indirect [INDIRECT]      n                  -
+   253   Private [PRIVATEDNS]     y      see below  OPTIONAL
+   254   Private [PRIVATEOID]     y      see below  OPTIONAL
+   255   reserved
+
+   6 - 251  Available for assignment by IETF Standards Action.
+ */
+
+// https://en.wikipedia.org/wiki/Domain_Name_System_Security_Extensions#Algorithms
+export const ALGORITHMS: Record<number, AlgorithmIdentifier | RsaPssParams | EcdsaParams> = {
+    5: { "name": "RSASSA-PKCS1-v1_5", hash: "SHA-1" } as AlgorithmIdentifier | RsaHashedImportParams, // https://datatracker.ietf.org/doc/html/rfc3110
+    // 7: { "name": "RSASHA1-NSEC3-SHA1" }, // TODO https://datatracker.ietf.org/doc/html/rfc5155
+    8: { "name": "RSASSA-PKCS1-v1_5", hash: "SHA-256" } as AlgorithmIdentifier | RsaHashedImportParams, // https://datatracker.ietf.org/doc/html/rfc5702
+    10: { "name": "RSASSA-PKCS1-v1_5", hash: "SHA-512" } as AlgorithmIdentifier | RsaHashedImportParams, // https://datatracker.ietf.org/doc/html/rfc5702
+    13: { "name": "ECDSA", hash: "SHA-256", "namedCurve": "P-256" } as EcdsaParams | EcKeyImportParams, // https://datatracker.ietf.org/doc/html/rfc6605
+    14: { "name": "ECDSA", hash: "SHA-384", "namedCurve": "P-384" } as EcdsaParams | EcKeyImportParams, // https://datatracker.ietf.org/doc/html/rfc6605
+    // 0: { "name": "RSASSA-PKCS1-v1_5" } as Algorithm,
+    // 0: { "name": "HMAC" } as Algorithm,
+};
+
 // Each DNS query can return one of the following error codes:
 export const NODATA = 'NODATA';                // DNS server returned answer with no data.
 export const FORMERR = 'FORMERR';                // DNS server claims query was misformatted.

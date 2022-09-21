@@ -1,5 +1,6 @@
 import {ErrorCode, RecordType} from "./constants.js";
 import * as constants from "./constants.js";
+import {Response} from "./rfc1035";
 
 export type DNSRecord = {}
 
@@ -188,7 +189,7 @@ export interface Resolver {
     reverse(hostname: string, callback: (err?: DNSError, hostnames?: string[]) => void): void;
 }
 
-export type ResolveOptions = {ttl?:boolean, raw?: boolean};
+export type ResolveOptions = {ttl?:boolean, raw?: boolean, dnssec?: boolean};
 
 export interface PromiseResolver {
     // constructor(options?: { timeout: number }): Resolver;

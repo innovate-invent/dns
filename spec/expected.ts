@@ -1,6 +1,7 @@
-import {RecordType} from "../src/constants";
+import {RecordType} from "../src/constants.js";
+import {ResolveOptions} from "../src/dns";
 
-export type Expected = {host: string, records: any[], cmp?: string[], pending?: boolean};
+export type Expected = {host: string, records: any[], cmp?: string[], pending?: boolean, options?: ResolveOptions};
 
 export const nodeTypes = { // The expected values here should be identical to what NodeJS DNS returns
     "SOA": {
@@ -58,10 +59,11 @@ export const extendedTypes = {
     "DNSKEY": {
         host: "cloudflare.com",
         records: [
-            {"flags": 256, "protocol": 3, "algorithm": 13, },
-            {"flags": 257, "protocol": 3, "algorithm": 13, },
+            {"zone_key": 1, "protocol": 3, "algorithm": 13, },
+            {"zone_key": 1, "protocol": 3, "algorithm": 13, },
         ],
-        cmp: ['flags', 'protocol', 'algorithm'],
+        cmp: ['zone_key', 'protocol', 'algorithm'],
+        options: {dnssec: true}
     },
     "DS": {
         host: "cloudflare.com",
@@ -69,6 +71,14 @@ export const extendedTypes = {
             {"key_tag": 2371, "algorithm": 13, "digest_type": 2, },
         ],
         cmp: ["key_tag", "algorithm", "digest_type"]
+    },
+    "NSEC": {
+        host: "cloudflare.com",
+        records: [
+            {"next_domain_name": ["\u0000","cloudflare","com",""], "type_bit_map": new Set([RecordType.A, RecordType.NS, RecordType.SOA, RecordType.HINFO, RecordType.MX, RecordType.TXT, RecordType.AAAA, RecordType.LOC, RecordType.SRV, RecordType.NAPTR, RecordType.CERT, RecordType.SSHFP, RecordType.RRSIG, RecordType.NSEC, RecordType.DNSKEY, RecordType.TLSA, RecordType.SMIMEA, RecordType.HIP, RecordType.CDS, RecordType.CDNSKEY, RecordType.OPENPGPKEY, RecordType.SVCB, RecordType.HTTPSSVC, RecordType.SPF, RecordType.URI, RecordType.CAA]) },
+        ],
+        cmp: ["next_domain_name", "type_bit_map"],
+        options: {dnssec: true}
     },
     "LOC": {host: "example.i2labs.ca.", records: [
             {
