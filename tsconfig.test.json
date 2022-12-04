@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
-    "module": "es6",
-    "target": "es6"
+    "module": "ES2022",
+    "target": "ES2021",
+    "lib": [
+      "ES2021",
+      "dom"
+    ]
   },
-  "include": ["spec/index.spec.ts", "spec/rfc8484.spec.ts"]
+  "include": ["spec/index.spec.ts", "spec/rfc8484.spec.ts"],
 }

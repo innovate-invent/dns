@@ -15,37 +15,47 @@
   "module": "dist/index.esm.js",
   "type": "module",
   "types": "dist/index.d.ts",
-  "keywords": ["nodejs", "browserify", "dns", "DoH", "RFC8484", "RFC1035"],
+  "keywords": [
+    "nodejs",
+    "browserify",
+    "dns",
+    "DoH",
+    "RFC8484",
+    "RFC1035"
+  ],
   "files": [
     "dist/"
   ],
   "scripts": {
     "prebuild": "npm run clean && npm run lint",
     "build": "rollup -c",
-    "build:test": "npm run build && tsc -p tsconfig.test.json",
+    "build:test": "TARGET=test npm run build",
+    "start": "TARGET=test rollup -w -c",
     "lint": "tslint src/*.ts",
     "clean": "rm -rf dist",
-    "test": "ts-mocha -p tsconfig.node.json spec/nodejs.spec.ts",
+    "test:compat": "ts-mocha -p tsconfig.node.json spec/nodejs.spec.ts",
+    "test": "ts-mocha -p tsconfig.test.json",
     "publish": "npm publish --access public"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "^22.0.1",
     "@rollup/plugin-node-resolve": "^13.3.0",
+    "@rollup/plugin-typescript": "^9.0.2",
     "@types/chai": "^4.3.1",
     "@types/mocha": "^9.1.1",
     "@types/node": "^18.6.1",
     "@types/estree": "^1.0.0",
     "chai": "^4.3.6",
+    "mocha": "^10.0.0",
     "rollup": "^2.77.0",
-    "rollup-plugin-typescript2": "^0.32.1",
     "ts-loader": "^9.3.1",
     "ts-mocha": "^10.0.0",
+    "ts-node": "^10.9.1",
     "tslint": "^6.1.3",
     "typescript": "^4.7.4",
     "uglifyjs": "^2.4.11",
-    "rollup-plugin-sourcemaps": "^0.6.3"
+    "rollup-plugin-sourcemaps": "^0.6.3",
+    "mocha-headless-chrome": "^4.0.0"
   },
-  "dependencies": {
-
-  }
+  "dependencies": {}
 }

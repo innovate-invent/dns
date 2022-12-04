@@ -5,7 +5,7 @@ const expect = chai.expect;
 
 import expected from "./expected.js";
 import {cmp} from "./common.js";
-import {RecordType} from "../src/constants";
+import {RecordType} from "../src/constants.js";
 
 
 function test(f: (host: string, cb: (err?: DNSError, addresses?: any[])=>void)=>void, rrval: keyof typeof RecordType | 'ANY'): void {

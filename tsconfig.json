@@ -2,8 +2,12 @@
   "compilerOptions": {
     "outDir": "./dist/",
     "noImplicitAny": true,
-    "module": "ES6",
-    "target": "ES6",
+    "module": "ES2022",
+    "target": "ES2021",
+    "lib": [
+      "ES2021",
+      "dom"
+    ],
     "sourceMap": true,
     "esModuleInterop": true,
     "declaration": true,

@@ -6,7 +6,7 @@ const expect = chai.expect;
 import expected from "./expected.js";
 import {cmp} from "./common.js";
 import {RecordType} from "../src/constants.js";
-import {Response} from "../dist/rfc1035";
+import {Response} from "../src/rfc1035.js";
 
 type Test = {hostname: string, rrval?: (keyof typeof RecordType) | 'ANY', options?:ResolveOptions, result: any[] | Response, cmp?:string[], pending?:boolean};
 
@@ -23,7 +23,7 @@ describe('RFC8484 Resolver', function () {
             {hostname: expected.A.host, rrval: undefined, result: expected.A.records},
             {hostname: expected.A.host, rrval: 'ANY', result: [], pending: true},
             {hostname: expected.A.host, rrval: 'A', result: {
-                    "header": {"ID": 0, "QR": 1, "Opcode": 0, "AA": 0, "TC": 0, "RD": 1, "RA": 1, "AD": 0, "CD": 0, "RCODE": 0, "QDCOUNT": 1, "ANCOUNT": 1, "NSCOUNT": 0, "ARCOUNT": 0, "Z": undefined},
+                    "header": {"ID": 0, "QR": 1, "Opcode": 0, "AA": 0, "TC": 0, "RD": 1, "RA": 1, "AD": 0, "CD": 0, "RCODE": 0, "QDCOUNT": 1, "ANCOUNT": 1, "NSCOUNT": 0, "ARCOUNT": 0, "Z": 0},
                     "question": [{"QNAME": ["example", "i2labs", "ca", ""], "QTYPE": 1, "QCLASS": 1}],
                     "answer": [{"NAME": ["example", "i2labs", "ca", ""], "TYPE": 1, "CLASS": 1, "RDLENGTH": 4, "RDATA": [0, 0, 0, 0]}],
                     "authority": [],

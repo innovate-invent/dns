@@ -4,11 +4,12 @@ import {BaseResolver} from "./base_resolver.js";
 import {ALGORITHMS, RecordType} from "./constants.js";
 import {base64url_decode, base64url_encode} from "./base64url.js";
 import {JsonWebKey} from "crypto";
-import * as crypto from "crypto";
+import Base = Mocha.reporters.Base;
+// import * as crypto from "crypto";
 
-// RRSIG - Contains a cryptographic signature
-// DNSKEY - Contains a public signing key
-// DS - Contains the hash of a DNSKEY record, RRSIG for this record is signed by parent
+// RRSIG - Contains a cryptographic signature signed by ZSK
+// DNSKEY - Contains a public signing key. KSK or ZSK with zone_key flag set
+// DS - Contains the hash of a DNSKEY record, RRSIG for this record is signed by parent zone ZSK. Hosted by parent zone, but lookup is done on child zone.
 // NSEC and NSEC3 - For explicit denial-of-existence of a DNS record
 // CDNSKEY and CDS - For a child zone requesting updates to DS record(s) in the parent zone.
 
@@ -34,19 +35,21 @@ type CachedDS = (RDATA[RecordType.DS] & Expires)[];
 type StoredDS = {ds: CachedDS} & Signed;
 
 type CachedCryptoKeys = Expires & {
-    keys: CryptoKey[]
+    keys: CryptoKey[],
+    keyTags: number[],
 }
 
 type StoredCryptoKeys = Expires & Signed & {
-    keys: JsonWebKey[]
+    keys: JsonWebKey[],
+    keyTags: number[],
 }
 
 type SigningKey = CryptoKey & Expires;
 
 // The following should be protected by the JS engine from any external code trying to inject values
 let ROOTDIGESTS: CachedDS = [];
-let SESSIONDSCACHE: Record<string, CachedDS> = {};
-let SESSIONKEYCACHE: Record<string, CachedCryptoKeys> = {};
+const SESSIONDSCACHE: Record<string, CachedDS> = {};
+const SESSIONKEYCACHE: Record<string, CachedCryptoKeys> = {};
 
 const STOREKEYPREFIX = "@i2labs.ca/dns/keys/"  // localStore key prefix for DNS Zone Keys
 const STOREDSPREFIX = "@i2labs.ca/dns/ds/";  // localStore key prefix for DS records
@@ -54,83 +57,174 @@ const STOREDSPREFIX = "@i2labs.ca/dns/ds/";  // localStore key prefix for DS rec
 /**
  * Helper to deserialize CryptoKeys from localStore cache
  * @param owner name of DNSKEY owner in canonical form (lowercase)
+ * @param resolver An instance of a resolver used to make requests for the DNSKEY records
+ * @param keyTag key tag of original DNSKEY to filter on
  */
-async function getKeys(owner: string[]): Promise<CryptoKey[]> {
+async function getKeys(owner: string[], resolver: BaseResolver, keyTag?: number): Promise<CryptoKey[]> {
     const now = Date.now();
     const label = `${STOREKEYPREFIX}${owner.join('.')}`;
+
+    // Check session cache
     if (label in SESSIONKEYCACHE) {
         const keys = SESSIONKEYCACHE[label];
         if (now >= keys.expires) {
             delete SESSIONKEYCACHE[label];
             return [];
         }
+        if (keyTag !== undefined) return keys.keys.filter((k, i)=>keys.keyTags[i] === keyTag);
         return keys.keys;
     }
+
+    // Check localStorage
     const s = localStorage.getItem(label);
     if (s) {
-        let keys: StoredCryptoKeys = JSON.parse(s);
-        if (now >= keys.expires) {
+        const storedKeys: StoredCryptoKeys = JSON.parse(s);
+        if (now >= storedKeys.expires) {
             localStorage.removeItem(label);
-            return [];
-        }
-        // Validate keys from storage
-        // TODO
-        return Promise.all(keys.keys.map(async jwk=>{
-            const key = crypto.subtle.importKey("jwk", jwk, jwk.alg as string, true, jwk.key_ops as KeyUsage[]);
-            return key;
-        }));
-    }
-    return [];
-}
+        } else {
+            // Validate keys from storage
+            // TODO
+            const ksk = storedKeys.keys.find((k, i) => storedKeys.rrsig.key_tag === storedKeys.keyTags[i] && storedKeys.rrsig.)
+            const validatedKeys = await Promise.all(storedKeys.keys.map(async jwk => {
+                const key = crypto.subtle.importKey("jwk", jwk, jwk.alg as string, true, jwk.key_ops as KeyUsage[]);
+                // TODO validateKSK()
 
-async function setKeys(owner: string[], keys: CryptoKey[], expires: number, rrsig_rdata: RDATA[RecordType.RRSIG]) {
-    const label = `${STOREKEYPREFIX}${owner.join('.')}`;
-    if (Date.now() >= expires) return;
-    SESSIONKEYCACHE[label] = {keys, expires};
+                return key;
+            }));
+        }
+    }
+
+    // Retreive keys
+    const response = (await resolver.resolve(owner.join('.'), 'DNSKEY', {
+        raw: true,
+        dnssec: true
+    }) as Response).answer;
+    const keyResponse = response.filter(r => r.TYPE === RecordType.DNSKEY) as ResponseRecord<RecordType.DNSKEY>[];
+    const rrsig = response.find()
+    const ksk = keyResponse.find(k=>k.RDATA.key_tag ==  k.RDATA.zone_key)
+
+
+    SESSIONKEYCACHE[label] = {keys, expires, keyTags};
     localStorage.setItem(label, JSON.stringify({
         owner,
         keys: (await Promise.all(keys.map(async key=>({alg: key.algorithm, ... await crypto.subtle.exportKey("jwk", key)})))),
         expires,
         rrsig: {
-            original_ttl: rrsig_rdata.original_ttl,
-            sig_expiration: rrsig_rdata.sig_expiration,
-            sig_inception: rrsig_rdata.sig_inception,
-            signer: rrsig_rdata.signer,
-            signature: base64url_encode(rrsig_rdata.signature),
+            original_ttl: rrsigRDATA.original_ttl,
+            sig_expiration: rrsigRDATA.sig_expiration,
+            sig_inception: rrsigRDATA.sig_inception,
+            signer: rrsigRDATA.signer,
+            signature: base64url_encode(rrsigRDATA.signature),
         }
     }));
+
+    return [];
 }
 
 /**
- * Helper to retrieve IANA root anchor digests for validating DS chain
+ * Helper to retrieve IANA root anchor digests for validating DS chain.
+ * This depends on the browsers HTTPS certificate validation to guarantee authenticity of root records.
  */
 async function getRootDS(): Promise<typeof ROOTDIGESTS> {
     const now = Date.now();
     ROOTDIGESTS = ROOTDIGESTS.filter(d=>d.expires > now);
-    if (!ROOTDIGESTS) {
-        const response = await fetch("https://data.iana.org/root-anchors/root-anchors.xml");
-        const anchor: XMLDocument = await response.text().then(t => new DOMParser().parseFromString(t, 'text/xml'));
-        ROOTDIGESTS = [];
-        anchor.querySelectorAll('KeyDigest').forEach(keydigest => {
-            // https://www.rfc-editor.org/rfc/rfc7958.html
-            // const id = keydigest.getAttribute("id");
-            const validFrom = Date.parse(keydigest.getAttribute("validFrom"));
-            const validUntil = keydigest.hasAttribute("validUntil") ? Date.parse(keydigest.getAttribute("validUntil")) : Date.parse(response.headers.get('expires'));
-            if (validFrom <= now && now < validUntil) ROOTDIGESTS.push({
-                expires: validUntil,
-                key_tag: parseInt(keydigest.querySelector("KeyTag").textContent, 10),
-                algorithm: parseInt(keydigest.querySelector("Algorithm").textContent, 10),
-                digest_type: parseInt(keydigest.querySelector("DigestType").textContent, 10),
-                digest: Uint8Array.from(keydigest.querySelector("DigestType").textContent.match(/../), c => parseInt(c, 16)).buffer,
-            });
+    if (ROOTDIGESTS) return ROOTDIGESTS;
+
+    const response = await fetch("https://data.iana.org/root-anchors/root-anchors.xml");
+    const anchor: XMLDocument = await response.text().then(t => new DOMParser().parseFromString(t, 'text/xml'));
+    ROOTDIGESTS = [];
+    anchor.querySelectorAll('KeyDigest').forEach(keydigest => {
+        // https://www.rfc-editor.org/rfc/rfc7958.html
+        // const id = keydigest.getAttribute("id");
+        const validFrom = Date.parse(keydigest.getAttribute("validFrom"));
+        const validUntil = keydigest.hasAttribute("validUntil") ? Date.parse(keydigest.getAttribute("validUntil")) : Date.parse(response.headers.get('expires'));
+        if (validFrom <= now && now < validUntil) ROOTDIGESTS.push({
+            expires: validUntil,
+            key_tag: parseInt(keydigest.querySelector("KeyTag").textContent, 10),
+            algorithm: parseInt(keydigest.querySelector("Algorithm").textContent, 10),
+            digest_type: parseInt(keydigest.querySelector("DigestType").textContent, 10),
+            digest: Uint8Array.from(keydigest.querySelector("DigestType").textContent.match(/../), c => parseInt(c, 16)).buffer,
         });
-    }
+    });
     return ROOTDIGESTS;
 }
 
-async function validateDS(key: SigningKey, ds: StoredDS) {
+/**
+ * Fetch DS record for ksk from cache or request from resolver
+ * @param ksk KSK record to validate
+ * @param resolver An instance of a resolver used to make requests for the DS records
+ */
+async function getStoredDS(ksk: ResponseRecord<RecordType.DNSKEY>, resolver: BaseResolver): Promise<CachedDS> {
+    if (ksk.NAME.length === 1) return getRootDS();  // Root key
+
+    // Check session cache
+    const now = Date.now();
+    const label = `${STOREDSPREFIX}${ksk.NAME.join('.')}`;
+    if (label in SESSIONDSCACHE) {
+        const ds = SESSIONDSCACHE[label].filter(d=>d.expires > now);
+        SESSIONDSCACHE[label] = ds;
+        return ds;
+    }
+
+    // Check localStorage
+    const s = localStorage.getItem(label);
+    if (s) {
+        const storedDS = JSON.parse(s) as StoredDS;
+        storedDS.ds.forEach((d: RDATA[RecordType.DS]) => d.digest = base64url_decode(d.digest as unknown as string));
+        storedDS.rrsig.signature = base64url_decode(storedDS.rrsig.signature as unknown as string);
+
+        const keys = await getKeys(storedDS.rrsig.signer, resolver, storedDS.rrsig.key_tag);  // KSK of parent zone
+        if (await validateStoredDS(keys, storedDS)) return storedDS.ds;
+        throw new Error('No DS record for ' + ksk.NAME);
+    }
+
+    // Fetch DS from DNS
+    const response = await resolver.resolve(ksk.NAME.join('.'), "DS", {
+        raw: true,
+        dnssec: true
+    }) as Response;
+    const dsrecords = response.answer.filter(r => r.TYPE === RecordType.DS) as ResponseRecord<RecordType.DS>[];
+    if (!dsrecords) return [];
+    const rrsig = response.answer.find(r => r.TYPE === RecordType.RRSIG && (r as ResponseRecord<RecordType.RRSIG>).RDATA.type_covered === RecordType.DS) as ResponseRecord<RecordType.RRSIG>;
+    if (!rrsig) throw new Error('No RRSIG returned with DS');
+    const dsset: Record<string, StoredDS> = {};
+
+    for (const r of dsrecords) {
+        const l = `${STOREDSPREFIX}${r.NAME.join('.')}`;
+        const set = dsset[l] || {
+            ds: [] as CachedDS,
+            rrsig: {
+                original_ttl: rrsig.RDATA.original_ttl,
+                sig_expiration: rrsig.RDATA.sig_expiration,
+                sig_inception: rrsig.RDATA.sig_inception,
+                signer: rrsig.RDATA.signer,
+                signature: rrsig.RDATA.signature
+            }
+        } as StoredDS;
+        set.ds.push({
+            ...r.RDATA,
+            expires: (r.TTL * 1000) + now,
+        });
+        dsset[l] = set;
+    }
+    Object.entries(dsset).forEach(([k, v]: [string, StoredDS]) =>
+        localStorage.setItem(k, JSON.stringify({
+            ...v,
+            ds: v.ds.map(d => ({...d, digest: base64url_encode(d.digest)})),
+            rrsig: {...v.rrsig, signature: base64url_encode(v.rrsig.signature)}
+        }))
+    );
+    return dsset[label].ds;
+}
+
+/**
+ * Validate a StoredDS record with its signing key
+ * @param keys Array of keys used to sign DS records
+ * @param ds StoredDS record instance to validate
+ */
+async function validateStoredDS(keys: CryptoKey[], ds: StoredDS): Promise<boolean> {
     // Reconstruct rrsig and ds rrset
-    const rrsig_data: RDATA[RecordType.RRSIG] = {
+    const rrsigRDATA: RDATA[RecordType.RRSIG] = {
         type_covered: RecordType.DS,
         labels: ds.owner.length-1,
         ...ds.rrsig,
@@ -151,75 +245,19 @@ async function validateDS(key: SigningKey, ds: StoredDS) {
             raw_rdata: buffer,
         } as ResponseRecord<RecordType.DS>;
     });
-    return verifyRRSIG(key, rrsig_data, rrset);
+    return verifyRRSIG(keys, rrsigRDATA, rrset);
 }
 
 /**
- * Validate a provided Key Signing Key by looking up the respective DS record and comparing the digest
- * DS records are cached in localStorage, and revalidated when read from storage to protect from injection attacks
+ * Validate a provided Key Signing Key by looking up the respective DS record and comparing the digest.
+ * DS records are cached in localStorage, and revalidated when read from storage to protect from injection attacks.
  * @param ksk KSK record to validate
  * @param resolver An instance of a resolver used to make requests for the DS records
  */
 export async function validateKSK(ksk: ResponseRecord<RecordType.DNSKEY>, resolver: BaseResolver): Promise<boolean> {
     if (!ksk.RDATA.zone_key) return false;  // The DNSKEY RR referred to in the DS RR MUST be a DNSSEC zone key.
-    let ds: CachedDS;
-    if (ksk.NAME.length === 1) ds = await getRootDS();  // Root key
-    else {
-        const now = Date.now();
-        const label = `${STOREDSPREFIX}${ksk.NAME.join('.')}`;
-        if (label in SESSIONDSCACHE) {
-            ds = SESSIONDSCACHE[label].filter(d=>d.expires > now);
-            SESSIONDSCACHE[label] = ds;
-        }
-        if (!ds) {
-            const s = localStorage.getItem(label);
-            let stored_ds: StoredDS;
-            if (s) {
-                stored_ds = JSON.parse(s) as StoredDS;
-                stored_ds.ds.forEach((d: RDATA[RecordType.DS]) => d.digest = base64url_decode(d.digest as unknown as string));
-                stored_ds.rrsig.signature = base64url_decode(stored_ds.rrsig.signature as unknown as string);
-            }
-            if (!stored_ds) {
-                // Fetch DS
-                const response = await resolver.resolve(ksk.NAME.join('.'), "DS", {
-                    raw: true,
-                    dnssec: true
-                }) as Response;
-                const ds_response = response.answer.filter(r => r.TYPE === RecordType.DS) as ResponseRecord<RecordType.DS>[];
-                const rrsig = response.answer.find(r => r.TYPE === RecordType.RRSIG && (r as ResponseRecord<RecordType.RRSIG>).RDATA.type_covered === RecordType.DS) as ResponseRecord<RecordType.RRSIG>;
-                if (ds_response) {
-                    const dsset: Record<string, StoredDS> = {};
-                    for (const r of ds_response) {
-                        const l = `${STOREDSPREFIX}${r.NAME.join('.')}`;
-                        const set = dsset[l] || [];
-                        set.push({
-                            ...r.RDATA,
-                            expires: (r.TTL * 1000) + now,
-                            rrsig: {
-                                original_ttl: rrsig.RDATA.original_ttl,
-                                sig_expiration: rrsig.RDATA.sig_expiration,
-                                sig_inception: rrsig.RDATA.sig_inception,
-                                signer: rrsig.RDATA.signer,
-                                signature: rrsig.RDATA.signature
-                            }
-                        });
-                        dsset[l] = set;
-                    }
-                    ds = dsset[label].ds;
-                    Object.entries(dsset).forEach(([k, v]: [string, CachedDS[]]) => localStorage.setItem(k, JSON.stringify(v.map(d => ({
-                        ...d,
-                        digest: base64url_encode(d.digest),
-                        rrsig: {...d.rrsig, signature: base64url_encode(d.rrsig.signature)}
-                    })))));
-                }
-            }
-            if (stored_ds) {
-                if (!validateDS(k, stored_ds)) throw new Error('Invalid DS record for ' + ksk.NAME);
-                ds = stored_ds.ds;
-            }
-        }
-        if (!ds) ds = await getRootDS();  // Just shove in root DS if nothing found
-    }
+    const ds = await getStoredDS(ksk, resolver);
+
     for (const d of ds) {
         if (d.key_tag === ksk.RDATA.key_tag && d.algorithm === ksk.RDATA.algorithm) {
             // digest = digest_algorithm( DNSKEY owner name | DNSKEY RDATA);
@@ -235,6 +273,10 @@ export async function validateKSK(ksk: ResponseRecord<RecordType.DNSKEY>, resolv
     return false;
 }
 
+/**
+ * Import a DNSKEY record to a CryptoKey for use by crypto library
+ * @param key DNSKEY record
+ */
 export async function importDNSKEY(key: ResponseRecord<RecordType.DNSKEY>): Promise<CryptoKey> {
     const algorithm = ALGORITHMS[key.RDATA.algorithm];
     switch (key.RDATA.algorithm) {
@@ -254,6 +296,10 @@ export async function importDNSKEY(key: ResponseRecord<RecordType.DNSKEY>): Prom
     }
 }
 
+/**
+ * Canonical count of DNS name labels as per RRSIG RDATA 'labels' field
+ * @param name DNS name to count
+ */
 export function labelCount(name: string[]): number {
     let ownerNameLen = name.length;
     // Root (".") has a Labels field value of 0 and
@@ -264,34 +310,42 @@ export function labelCount(name: string[]): number {
     return ownerNameLen;
 }
 
-export async function verifyRRSIG(key: CryptoKey, rrsig_data: RDATA[RecordType.RRSIG], rrset: ResponseRecord<any>[]): Promise<boolean> {
-    if (rrsig_data.type_covered === RecordType.DNSKEY) {
-        // Check for KSK and use that
-        // TODO
-    }
-    // Else check for zsk and use that
-    if (!(rrsig_data.algorithm in ALGORITHMS)) throw new Error("Unable to verify rrsig, unsupported algorithm " + rrsig_data.algorithm);
-    return crypto.subtle.verify(ALGORITHMS[rrsig_data.algorithm], key, rrsig_data.signature, signedData(rrsig_data, rrset));
+/**
+ * Verify the rrset matches the RRSIG record signed with one of keys
+ * @param keys Array of candidate keys, multiple can be attempted in the event that the signing key is ambiguous
+ * @param rrsigRDATA RDATA for RRSIG record of rrset
+ * @param rrset Array of ResponseRecords of same type returned in a single request
+ */
+export async function verifyRRSIG(keys: CryptoKey[], rrsigRDATA: RDATA[RecordType.RRSIG], rrset: ResponseRecord<any>[]): Promise<boolean> {
+    if (!(rrsigRDATA.algorithm in ALGORITHMS)) throw new Error("Unable to verify rrsig, unsupported algorithm " + rrsigRDATA.algorithm);
+    const data = signedData(rrsigRDATA, rrset);
+    return Promise.any(keys.map(key=>crypto.subtle.verify(ALGORITHMS[rrsigRDATA.algorithm], key, rrsigRDATA.signature, data)));
 }
 
-export function signedData(rrsig_data: RDATA[RecordType.RRSIG], rrset: ResponseRecord<any>[]): ArrayBuffer {
+/**
+ * Construct the data represented by the RRSIG signature
+ * @param rrsigRDATA RRSIG record RDATA, excluding signature
+ * @param rrset Array of ResponseRecords signed by RRSIG
+ * @return Buffer of data in canonical format ready to be cryptographically signed
+ */
+export function signedData(rrsigRDATA: RDATA[RecordType.RRSIG], rrset: ResponseRecord<any>[]): ArrayBuffer {
     // signed_data = RRSIG_RDATA | RR(1) | RR(2)...
-    let bufferLen = 18 + rrsig_data.signer.reduce((acc, cur) => acc + cur.length, 0) + rrsig_data.signer.length;
+    let bufferLen = 18 + rrsigRDATA.signer.reduce((acc, cur) => acc + cur.length, 0) + rrsigRDATA.signer.length;
     for (const rr of rrset) {
         bufferLen += rr.NAME.reduce((acc, cur) => acc + cur.length, 0) + rr.NAME.length;
         bufferLen += 10; // type | class | OrigTTL | RDATA length
         bufferLen += rr.RDLENGTH;
     }
-    const signedData = new ArrayBuffer(bufferLen);
-    const encoder = serialize(signedData);
+    const data = new ArrayBuffer(bufferLen);
+    const encoder = serialize(data);
     encoder.next();
 
     // RRSIG_RDATA is the wire format of the RRSIG RDATA fields with the Signature field excluded and the Signer's Name in canonical form.
     for (const [field, type] of Object.entries(_rdata.get(RecordType.RRSIG))) {
         if (field === "signer") {
-            encoder.next([type, rrsig_data.signer.map(v => v.toLowerCase())]);
+            encoder.next([type, rrsigRDATA.signer.map(v => v.toLowerCase())]);
         } else if (field !== "signature") {
-            encoder.next([type, rrsig_data[field as keyof RDATA[RecordType.RRSIG]]]);
+            encoder.next([type, rrsigRDATA[field as keyof RDATA[RecordType.RRSIG]]]);
         }
     }
 
@@ -323,12 +377,12 @@ export function signedData(rrsig_data: RDATA[RecordType.RRSIG], rrset: ResponseR
                     // if rrsig_labels = fqdn_labels, name = fqdn
                     // if rrsig_labels < fqdn_labels, name = "*." | the rightmost rrsig_label labels of the fqdn
                     // if rrsig_labels > fqdn_labels the RRSIG RR did not pass the necessary validation checks and MUST NOT be used to authenticate this RRset.
-                    if (rrsig_data.labels < val.length-1) val = ["*", ...val.slice(-(rrsig_data.labels+1))];
+                    if (rrsigRDATA.labels < val.length-1) val = ["*", ...val.slice(-(rrsigRDATA.labels+1))];
                     val = (val as string[]).map(v => v.toLowerCase());
                     break;
                 case "TTL":
                     // the RR's TTL is set to its original value as it appears in the originating authoritative zone or the Original TTL field of the covering RRSIG RR.
-                    val = rrsig_data.original_ttl;
+                    val = rrsigRDATA.original_ttl;
                     break;
                 default:
                     break;
@@ -343,9 +397,14 @@ export function signedData(rrsig_data: RDATA[RecordType.RRSIG], rrset: ResponseR
         // tslint:disable-next-line
         encoder.next(['opaque', new Uint8Array(rr.raw_rdata)]);
     }
-    return signedData;
+    return data;
 }
 
+/**
+ * Validate DNS Response using included RRSIG records
+ * @param response DNS Response returned by Resolver
+ * @param resolver Resolver instance used to make subsequent DNS requests needed to verify response
+ */
 export default async function validate(response: Response, resolver: BaseResolver) {
     const rrsigs = response.answer.filter(r => r.TYPE === RecordType.RRSIG) as ResponseRecord<RecordType.RRSIG>[];
     if (!rrsigs) throw new Error('Unable to validate DNSKEY, missing matching RRSIG');
@@ -368,60 +427,38 @@ export default async function validate(response: Response, resolver: BaseResolve
             r.NAME.join(".") === rr.NAME.join(".") &&  // The RRSIG RR and the RRset MUST have the same owner name
             r.CLASS === rr.CLASS &&  // and the same class.
             r.RDATA.type_covered === rr.TYPE &&  // The RRSIG RR's Type Covered field MUST equal the RRset's type.
-            r.RDATA.signer.join(".") === rr.NAME.join(".") &&  // The RRSIG RR's Signer's Name field MUST be the name of the zone that contains the RRset.
+            rr.NAME.join(".").endsWith(r.RDATA.signer.join(".")) &&  // The RRSIG RR's Signer's Name field MUST be the name of the zone that contains the RRset.
             r.RDATA.labels <= labelCount(rr.NAME) &&  // The number of labels in the RRset owner name MUST be greater than or equal to the value in the RRSIG RR's Labels field.
             r.RDATA.sig_expiration >= now &&  // The validator's notion of the current time MUST be less than or equal to the time listed in the RRSIG RR's Expiration field.
             r.RDATA.sig_inception <= now  // The validator's notion of the current time MUST be greater than or equal to the time listed in the RRSIG RR's Inception field.
         );
         // The RRSIG RR's Signer's Name, Algorithm, and Key Tag fields MUST match the owner name, algorithm, and key tag for some DNSKEY RR in the zone's apex DNSKEY RRset.
         // The matching DNSKEY RR MUST be present in the zone's apex DNSKEY RRset, and MUST have the Zone Flag bit (DNSKEY RDATA Flag bit 7) set.
-        for (const rrsig of rrsigMatches) {
+        return Promise.any(rrsigMatches.map(rrsig=>{
             switch (rr.TYPE) { // TODO check rrset CLASS is valid here
                 case RecordType.DNSKEY:
                     if (rr.NAME.length === 1) {  // Root DNSKEY
-
+                        // TODO
 
                     }
                     const ksk = rrset.find(r => r.RDATA.key_tag === rrsig.RDATA.key_tag && r.RDATA.zone_key);
                     if (ksk === undefined) throw new Error('Unable to validate DNSKEY, missing matching KSK');
-                    if (rrsig.RDATA.signer.join('.') !== rr.NAME.join('.')) throw new Error('Unable to validate DNSKEY, RRSIG signer mismatch');
+                    if (rr.NAME.join('.').endsWith(rrsig.RDATA.signer.join('.'))) throw new Error('Unable to validate DNSKEY, RRSIG signer mismatch');
+                    if (!await validateKSK(ksk, resolver)) throw new Error('Unable to validate DNSKEY, Invalid KSK');
                     // Verify rrset with KSK
                     const key = await importDNSKEY(ksk);
-                    if (!await verifyRRSIG(key, rrsig.RDATA, rrset)) throw new Error('Invalid KSK');
-                    // Fetch DS chain for KSK
-                    const ds = await resolver.resolve(rrsig.RDATA.signer.join('.'), 'DS', {raw: true, dnssec: true});
-                    // Verify ZSK with KSK
-                    // if (!(zsk.RDATA.algorithm in ALGORITHMS)) throw new Error('Unsupported encryption algorithm');
-                    // if (!await crypto.subtle.verify(ALGORITHMS[zsk.RDATA.algorithm], ksk, rrsig.RDATA.signature, zsk.RDATA.public_key)) throw new Error('Invalid ZSK');
-                    // Verify DNSKEY with ZSK (KSK signs itself)
-                    break;
+                    return verifyRRSIG([key], rrsig.RDATA, rrset);
                 case RecordType.DS:
                     // The DS record contains a digest of your DNSSEC Key Signing Key (KSK), and acts as a pointer to the next key in the chain of trust.
                     // tslint:disable-next-line
-                    //debugger;
-                    //break;
+                    // debugger;
+                    // break;
                 default:
                     // The RRSIG RR's Signer's Name, Algorithm, and Key Tag fields MUST match the owner name, algorithm, and key tag for some DNSKEY RR in the zone's apex DNSKEY RRset.
-                    let zsk = SIGNINGKEYS.get(`${rrsig.RDATA.key_tag}_${rrsig.NAME.join('.')}`);
-                    if (!zsk || zsk.expires <= now) {
-                        // The matching DNSKEY RR MUST be present in the zone's apex DNSKEY RRset, and MUST have the Zone Flag bit (DNSKEY RDATA Flag bit 7) set.
-                        const rrzsk = (await resolver.resolve(rrsig.RDATA.signer.join('.'), 'DNSKEY', {
-                            raw: true,
-                            dnssec: true
-                        }) as Response)
-                            .answer.filter(r => r.TYPE === RecordType.DNSKEY && (r as ResponseRecord<RecordType.DNSKEY>).RDATA.zone_key) as ResponseRecord<RecordType.DNSKEY>[];
-                        for (const r of rrzsk) {
-                            if (!(r.RDATA.algorithm in ALGORITHMS)) throw new Error("Unable to import zone signing key, unsupported algorithm " + r.RDATA.algorithm);
-
-                            SIGNINGKEYS.set(`${r.RDATA.key_tag}_${r.NAME.join('.')}`,
-                            );
-                        }
-                        zsk = SIGNINGKEYS.get(`${rrsig.RDATA.key_tag}_${rrsig.NAME.join('.')}`);
-                    }
-                    if (!zsk || zsk.expires <= now) throw new Error('Unable to validate RRSIG, no valid ZSK');
-                    return await verifyRRSIG(zsk, rrsig.RDATA, rrset);
+                    const zsk = await getKeys(rrsig.NAME, resolver, rrsig.RDATA.key_tag);
+                    if (!zsk) throw new Error('Unable to validate RRSIG, no valid ZSK');
+                    return verifyRRSIG(zsk, rrsig.RDATA, rrset);
             }
-        }
-        return false;
+        }));
     }))).every(x => x)
 }
