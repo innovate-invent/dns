@@ -581,7 +581,7 @@ export function parseResponse(data: ArrayBuffer, keepRDATA: boolean = false): Re
                 }
             }
             if ('ERCODE' in r) {
-                response.header.RCODE |= (r as Edns0Opt).ERCODE << 4;
+                response.header.RCODE |= (r as unknown as Edns0Opt).ERCODE << 4;
             }
             if (r.RDLENGTH > 0) {
                 const byteOffset = decoder.next().value as number || 0;

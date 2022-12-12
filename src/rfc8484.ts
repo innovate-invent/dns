@@ -58,152 +58,170 @@ function ipString(type: RecordType, ip: number[]): string {
     }
 }
 
+const CACHE_NAME = '@i2labs.ca/dns';
+
 export default class Resolver extends BaseResolver {
     protected servers: string[] = ['cloudflare-dns.com'];
 
-    resolve(hostname: string, rrtype?: (keyof typeof RecordType) | "ANY", options?: ResolveOptions): Promise<any> {
+    async resolve(hostname: string, rrtype?: (keyof typeof RecordType) | "ANY", options?: ResolveOptions): Promise<any> {
         if (rrtype === "ANY") rrtype = "*";
         else if (rrtype === undefined) rrtype = 'A';
         const question = new Question(hostname.split('.'), RecordType[rrtype as keyof typeof RecordType]);
         const payload = base64url_encode(buildRequest([question], undefined, options && options.dnssec));
-        return this._fetch(`https://${this.getServers()[0]}/dns-query?dns=${payload}`, {headers: new Headers({'accept': 'application/dns-message'})})
-            .then(response => response.arrayBuffer())
-            .then(response => parseResponse(response, options && options.dnssec))
-            .then(async response => {
-                if (!response.answer) throw DNSError.NODATA;
-                if (response.question && response.question.length === 1) { // verify question
-                    const q = response.question[0];
-                    if (Object.entries(question).some(([k,v])=>Array.isArray(v) ? v.some((e, i)=>e !== (q[k as keyof Question] as any[])[i]) : q[k as keyof Question] !== v)) throw new Error('DNS query in response does not match original query');
-                } else throw new Error('Unable to validate DNS query from response');
+        const url = `https://${this.getServers()[0]}/dns-query?dns=${payload}`;
+        let rawResponse: Response;
+        const cache = await caches.open(CACHE_NAME);
 
-                if (options && options.dnssec && !await validate(response, this)) throw new Error('DNSSEC validation failed'); // verify DNSSEC
-                if (options && options.raw) return response;
+        rawResponse = await cache.match(url);
+        if (rawResponse) {
+            const expires = rawResponse.headers.get('Expires');
+            if (expires && new Date(expires) < new Date()) {
+                cache.delete(url);
+                rawResponse = null;
+            }
+        }
 
-                switch (rrtype) {
-                    case 'A':
-                    case 'AAAA':
-                        if (options && options.ttl) return response.answer.map((item: AnswerRecord<RecordType.A|RecordType.AAAA>) => ({
-                            type: rrtype,
-                            address: ipString(item.TYPE, item.RDATA),
-                            ttl: item.TTL
-                        }));
-                        return response.answer.map((item: AnswerRecord<RecordType.A|RecordType.AAAA>) => ipString(item.TYPE, item.RDATA));
-                    default:
-                    case 'CNAME':
-                    case 'NS':
-                    case 'PTR':
-                        return response.answer.map((item: AnswerRecord<RecordType.CNAME|RecordType.NS|RecordType.PTR>) => item.RDATA.join ? item.RDATA.filter((i: any) => !!i).join('.') : item.RDATA);
-                    case 'ANY':
-                        return response.answer.map((item: AnswerRecord<keyof RDATA>) => {
-                            let d;
-                            switch (item.TYPE as RecordType) {
-                                case RecordType.A:
-                                    return {
-                                        type: 'A',
-                                        address: ipString(item.TYPE, item.RDATA as RDATA[RecordType.A]),
-                                        ttl: item.TTL
-                                    } as AnyARecord;
-                                case RecordType.AAAA:
-                                    return {
-                                        type: 'AAAA',
-                                        address: ipString(item.TYPE, item.RDATA as RDATA[RecordType.AAAA]),
-                                        ttl: item.TTL
-                                    } as AnyAAAARecord;
-                                case RecordType.CNAME:
-                                    return {type: 'CNAME', value: item.RDATA} as AnyCNAMERecord;
-                                case RecordType.NS:
-                                    return {type: 'NS', value: item.RDATA} as AnyNSRecord;
-                                case RecordType.PTR:
-                                    return {type: 'PTR', value: item.RDATA} as AnyPTRRecord;
-                                case RecordType.NAPTR:
-                                    d = item.RDATA as RDATA[RecordType.NAPTR];
-                                    return {
-                                        type: 'NAPTR',
-                                        flags: d.FLAGS,
-                                        order: d.ORDER,
-                                        preference: d.PREFERENCE,
-                                        regexp: d.REGEXP,
-                                        replacement: d.REPLACEMENT.filter((x: string) => !!x).join('.'),
-                                        service: d.SERVICES
-                                    } as AnyNAPTRRecord;
-                                case RecordType.SOA:
-                                    d = item.RDATA as RDATA[RecordType.SOA];
-                                    return {
-                                        type: 'SOA',
-                                        minttl: d.MINIMUM,
-                                        expire: d.EXPIRE,
-                                        retry: d.RETRY,
-                                        refresh: d.REFRESH,
-                                        serial: d.SERIAL,
-                                        hostmaster: d.RNAME.filter((x: string) => !!x).join('.'),
-                                        nsname: d.MNAME.filter((x: string) => !!x).join('.')
-                                    } as AnySOARecord;
-                                case RecordType.MX:
-                                    d = item.RDATA as RDATA[RecordType.MX];
-                                    return {
-                                        type: 'MX',
-                                        exchange: d.EXCHANGE.filter((x: string) => !!x).join('.'),
-                                        priority: d.PREFERENCE,
-                                    } as AnyMXRecord;
-                                case RecordType.TXT:
-                                    return {type: 'TXT', entries: item.RDATA} as AnyTXTRecord;
-                                case RecordType.CAA:
-                                    d = item.RDATA as RDATA[RecordType.CAA];
-                                    return {
-                                        type: 'CAA',
-                                        critical: d.flags,
-                                        [d.tag]: d.value
-                                    } as AnyCAARecord;
-                                case RecordType.SRV:
-                                    d = item.RDATA as RDATA[RecordType.SRV];
-                                    return {
-                                        type: "SRV",
-                                        weight: d.weight,
-                                        priority: d.priority,
-                                        name: d.target.filter((x: string) => !!x).join('.'),
-                                        port: d.port
-                                    } as AnySRVRecord;
-                            }
-                        });
-                    case 'MX':
-                        return response.answer.map((item: AnswerRecord<RecordType.MX>) => ({
-                            exchange: item.RDATA.EXCHANGE.filter((x: string) => !!x).join('.'),
-                            priority: item.RDATA.PREFERENCE
-                        } as MXRecord));
-                    case 'NAPTR':
-                        return response.answer.map((item: AnswerRecord<RecordType.NAPTR>) => ({
-                            flags: item.RDATA.FLAGS,
-                            order: item.RDATA.ORDER,
-                            preference: item.RDATA.PREFERENCE,
-                            regexp: item.RDATA.REGEXP,
-                            replacement: item.RDATA.REPLACEMENT.filter((x: string) => !!x).join('.'),
-                            service: item.RDATA.SERVICES
-                        } as NAPTRRecord));
-                    case 'SOA':
-                        return response.answer.map((item: AnswerRecord<RecordType.SOA>) => ({
-                            minttl: item.RDATA.MINIMUM,
-                            expire: item.RDATA.EXPIRE,
-                            retry: item.RDATA.RETRY,
-                            refresh: item.RDATA.REFRESH,
-                            serial: item.RDATA.SERIAL,
-                            hostmaster: item.RDATA.RNAME.filter((x: string) => !!x).join('.'),
-                            nsname: item.RDATA.MNAME.filter((x: string) => !!x).join('.')
-                        } as AnySOARecord))[0];
-                    case 'SRV':
-                        return response.answer.map((item: AnswerRecord<RecordType.SRV>) => ({
-                            weight: item.RDATA.weight,
-                            priority: item.RDATA.priority,
-                            name: item.RDATA.target.filter((x: string) => !!x).join('.'),
-                            port: item.RDATA.port
-                        } as SRVRecord));
-                    case 'TXT':
-                        return response.answer.map(item => item.RDATA);
-                    case 'CAA':
-                        return response.answer.filter(item => item.TYPE === RecordType.CAA).map((item: AnswerRecord<RecordType.CAA>) => ({
-                            critical: item.RDATA.flags,
-                            [item.RDATA.tag]: item.RDATA.value
-                        } as CAARecord));
-                }
-            });
+        if (!rawResponse) {
+            rawResponse = await this._fetch(url, {headers: new Headers({'accept': 'application/dns-message'})});
+        }
+
+        const response = await parseResponse(await (rawResponse.clone().arrayBuffer()), options && options.dnssec);
+        if (!response.answer) throw DNSError.NODATA;
+        if (response.question && response.question.length === 1) { // verify question
+            const q = response.question[0];
+            if (Object.entries(question).some(([k,v])=>Array.isArray(v) ? v.some((e, i)=>e !== (q[k as keyof Question] as any[])[i]) : q[k as keyof Question] !== v)) throw new Error('DNS query in response does not match original query');
+        } else throw new Error('Unable to validate DNS query from response');
+
+        const minTTL = response.answer.reduce((acc, cur)=>acc > cur.TTL ? cur.TTL : acc, 604800);
+        rawResponse.headers.set('Expires', new Date(Date.now() + (minTTL * 1000)).toUTCString());
+        cache.put(url, rawResponse);
+        if (options && options.dnssec && !await validate(response, this)) throw new Error('DNSSEC validation failed'); // verify DNSSEC
+        if (options && options.raw) return response;
+
+        switch (rrtype) {
+            case 'A':
+            case 'AAAA':
+                if (options && options.ttl) return response.answer.map((item: AnswerRecord<RecordType.A|RecordType.AAAA>) => ({
+                    type: rrtype,
+                    address: ipString(item.TYPE, item.RDATA),
+                    ttl: item.TTL
+                }));
+                return response.answer.map((item: AnswerRecord<RecordType.A|RecordType.AAAA>) => ipString(item.TYPE, item.RDATA));
+            default:
+            case 'CNAME':
+            case 'NS':
+            case 'PTR':
+                return response.answer.map((item: AnswerRecord<RecordType.CNAME|RecordType.NS|RecordType.PTR>) => item.RDATA.join ? item.RDATA.filter((i: any) => !!i).join('.') : item.RDATA);
+            case '*':
+                return response.answer.map((item: AnswerRecord<keyof RDATA>) => {
+                    let d;
+                    switch (item.TYPE as RecordType) {
+                        case RecordType.A:
+                            return {
+                                type: 'A',
+                                address: ipString(item.TYPE, item.RDATA as RDATA[RecordType.A]),
+                                ttl: item.TTL
+                            } as AnyARecord;
+                        case RecordType.AAAA:
+                            return {
+                                type: 'AAAA',
+                                address: ipString(item.TYPE, item.RDATA as RDATA[RecordType.AAAA]),
+                                ttl: item.TTL
+                            } as AnyAAAARecord;
+                        case RecordType.CNAME:
+                            return {type: 'CNAME', value: item.RDATA} as AnyCNAMERecord;
+                        case RecordType.NS:
+                            return {type: 'NS', value: item.RDATA} as AnyNSRecord;
+                        case RecordType.PTR:
+                            return {type: 'PTR', value: item.RDATA} as AnyPTRRecord;
+                        case RecordType.NAPTR:
+                            d = item.RDATA as RDATA[RecordType.NAPTR];
+                            return {
+                                type: 'NAPTR',
+                                flags: d.FLAGS,
+                                order: d.ORDER,
+                                preference: d.PREFERENCE,
+                                regexp: d.REGEXP,
+                                replacement: d.REPLACEMENT.filter((x: string) => !!x).join('.'),
+                                service: d.SERVICES
+                            } as AnyNAPTRRecord;
+                        case RecordType.SOA:
+                            d = item.RDATA as RDATA[RecordType.SOA];
+                            return {
+                                type: 'SOA',
+                                minttl: d.MINIMUM,
+                                expire: d.EXPIRE,
+                                retry: d.RETRY,
+                                refresh: d.REFRESH,
+                                serial: d.SERIAL,
+                                hostmaster: d.RNAME.filter((x: string) => !!x).join('.'),
+                                nsname: d.MNAME.filter((x: string) => !!x).join('.')
+                            } as AnySOARecord;
+                        case RecordType.MX:
+                            d = item.RDATA as RDATA[RecordType.MX];
+                            return {
+                                type: 'MX',
+                                exchange: d.EXCHANGE.filter((x: string) => !!x).join('.'),
+                                priority: d.PREFERENCE,
+                            } as AnyMXRecord;
+                        case RecordType.TXT:
+                            return {type: 'TXT', entries: item.RDATA} as AnyTXTRecord;
+                        case RecordType.CAA:
+                            d = item.RDATA as RDATA[RecordType.CAA];
+                            return {
+                                type: 'CAA',
+                                critical: d.flags,
+                                [d.tag]: d.value
+                            } as AnyCAARecord;
+                        case RecordType.SRV:
+                            d = item.RDATA as RDATA[RecordType.SRV];
+                            return {
+                                type: "SRV",
+                                weight: d.weight,
+                                priority: d.priority,
+                                name: d.target.filter((x: string) => !!x).join('.'),
+                                port: d.port
+                            } as AnySRVRecord;
+                    }
+                });
+            case 'MX':
+                return response.answer.map((item: AnswerRecord<RecordType.MX>) => ({
+                    exchange: item.RDATA.EXCHANGE.filter((x: string) => !!x).join('.'),
+                    priority: item.RDATA.PREFERENCE
+                } as MXRecord));
+            case 'NAPTR':
+                return response.answer.map((item: AnswerRecord<RecordType.NAPTR>) => ({
+                    flags: item.RDATA.FLAGS,
+                    order: item.RDATA.ORDER,
+                    preference: item.RDATA.PREFERENCE,
+                    regexp: item.RDATA.REGEXP,
+                    replacement: item.RDATA.REPLACEMENT.filter((x: string) => !!x).join('.'),
+                    service: item.RDATA.SERVICES
+                } as NAPTRRecord));
+            case 'SOA':
+                return response.answer.map((item: AnswerRecord<RecordType.SOA>) => ({
+                    minttl: item.RDATA.MINIMUM,
+                    expire: item.RDATA.EXPIRE,
+                    retry: item.RDATA.RETRY,
+                    refresh: item.RDATA.REFRESH,
+                    serial: item.RDATA.SERIAL,
+                    hostmaster: item.RDATA.RNAME.filter((x: string) => !!x).join('.'),
+                    nsname: item.RDATA.MNAME.filter((x: string) => !!x).join('.')
+                } as AnySOARecord))[0];
+            case 'SRV':
+                return response.answer.map((item: AnswerRecord<RecordType.SRV>) => ({
+                    weight: item.RDATA.weight,
+                    priority: item.RDATA.priority,
+                    name: item.RDATA.target.filter((x: string) => !!x).join('.'),
+                    port: item.RDATA.port
+                } as SRVRecord));
+            case 'TXT':
+                return response.answer.map(item => item.RDATA);
+            case 'CAA':
+                return response.answer.filter(item => item.TYPE === RecordType.CAA).map((item: AnswerRecord<RecordType.CAA>) => ({
+                    critical: item.RDATA.flags,
+                    [item.RDATA.tag]: item.RDATA.value
+                } as CAARecord));
+        }
     }
 }

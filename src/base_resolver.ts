@@ -28,6 +28,12 @@ export abstract class BaseResolver implements PromiseResolver {
         this._pending.clear();
     }
 
+    /**
+     * Fetch with abort
+     * @param resource URL of resource to fetch
+     * @param options RequestInit options to forward to fetch
+     * @protected
+     */
     protected async _fetch(resource: string, options?: RequestInit): Promise<Response> {
         const controller = new AbortController();
         let id;
@@ -41,7 +47,7 @@ export abstract class BaseResolver implements PromiseResolver {
             });
         } catch (e) {
             if (e.name === 'AbortError') throw new DNSError('request was cancelled', CANCELLED);
-            throw(e);
+            throw e;
         } finally {
             this._pending.delete(controller);
             if (id) clearTimeout(id);
