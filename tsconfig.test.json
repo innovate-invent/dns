@@ -7,5 +7,5 @@
       "dom"
     ]
   },
-  "include": ["spec/index.spec.ts", "spec/rfc8484.spec.ts"],
+  "include": ["spec/index.spec.ts", "spec/rfc8484.spec.ts"]
 }
