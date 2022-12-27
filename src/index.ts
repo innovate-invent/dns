@@ -1,13 +1,15 @@
 import {
-    Resolver,
-    PromiseResolver,
-    DNSRecord,
-    NAPTRRecord,
-    SOARecord,
-    SRVRecord,
-    ARecord,
     AAAARecord,
-    DNSError, LookupCallback, LookupCallbackAll, AnyDNSRecord
+    AnyDNSRecord,
+    ARecord,
+    DNSError,
+    LookupCallback,
+    LookupCallbackAll,
+    NAPTRRecord,
+    PromiseResolver,
+    Resolver,
+    SOARecord,
+    SRVRecord
 } from './dns.js'
 import RFCResolver from './rfc8484.js'
 import * as constants from './constants.js'

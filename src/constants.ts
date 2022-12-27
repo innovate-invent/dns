@@ -121,8 +121,13 @@ export const ALGORITHMS: Record<number, AlgorithmIdentifier | RsaPssParams | Ecd
     10: { "name": "RSASSA-PKCS1-v1_5", hash: "SHA-512" } as AlgorithmIdentifier | RsaHashedImportParams, // https://datatracker.ietf.org/doc/html/rfc5702
     13: { "name": "ECDSA", hash: "SHA-256", "namedCurve": "P-256" } as EcdsaParams | EcKeyImportParams, // https://datatracker.ietf.org/doc/html/rfc6605
     14: { "name": "ECDSA", hash: "SHA-384", "namedCurve": "P-384" } as EcdsaParams | EcKeyImportParams, // https://datatracker.ietf.org/doc/html/rfc6605
-    // 0: { "name": "RSASSA-PKCS1-v1_5" } as Algorithm,
-    // 0: { "name": "HMAC" } as Algorithm,
+};
+
+export const DIGESTS: Record<number, AlgorithmIdentifier> = {
+    1: "SHA-1",  // https://datatracker.ietf.org/doc/html/rfc3658
+    2: "SHA-256",  // https://datatracker.ietf.org/doc/html/rfc4509
+    // 3: "GOST R 34.10-2001"  // https://datatracker.ietf.org/doc/html/rfc5933
+    4: "SHA-384",  // https://datatracker.ietf.org/doc/html/rfc6605
 };
 
 // Each DNS query can return one of the following error codes:

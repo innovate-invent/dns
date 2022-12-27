@@ -1,15 +1,15 @@
 import {
-    AAAARecord, AnyDNSRecord,
-    ARecord, CAARecord,
-    CNAMERecord,
+    AAAARecord,
+    AnyDNSRecord,
+    ARecord,
     DNSError,
-    DNSRecord, MXRecord,
     NAPTRRecord,
-    PromiseResolver, ResolveOptions,
+    PromiseResolver,
+    ResolveOptions,
     SOARecord,
     SRVRecord
 } from "./dns.js";
-import {CANCELLED, NOTIMP, RecordType} from "./constants.js";
+import {CANCELLED, RecordType} from "./constants.js";
 
 // tslint:disable-next-line no-empty-interface
 export interface BaseResolver extends PromiseResolver {} // Allows partial implementation of PromiseResolver in abstract class using declaration merging

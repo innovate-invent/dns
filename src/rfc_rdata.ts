@@ -1,6 +1,8 @@
 import {RecordType} from "./constants.js";
 import {Tokenizer, TokenType} from "./rfc1035.js";
 
+// tslint:disable:no-bitwise
+
 type IP4ADDR = [number, number, number, number];
 type IP6ADDR = [number, number, number, number, number, number, number, number];
 
@@ -167,7 +169,7 @@ _rdata.set(RecordType.A6, 'opaque');
 _rdata.set(RecordType.DNAME, DOMAINNAME);
 _rdata.set(RecordType.SINK, {coding: 'u8', subcoding: 'u8', data: 'opaque'});
 _rdata.set(RecordType.OPT, {code: 'u16', length: 'u16', data: 'opaque'});
-_rdata.set(RecordType.APL, {ADDRESSFAMILY: 'u16', PREFIX: 'u8', N: 'bit', AFDLENGTH: (d: Tokenizer): number=>(new Array(7)).fill(undefined).map(x=>d.next('bit').value as number).reduce((acc: number, cur: number)=>((acc<<1)+cur), 0), AFDPART: 'opaque'});
+_rdata.set(RecordType.APL, {ADDRESSFAMILY: 'u16', PREFIX: 'u8', N: 'bit', AFDLENGTH: (d: Tokenizer): number=>(new Array(7)).fill(undefined).map(()=>d.next('bit').value as number).reduce((acc: number, cur: number)=>((acc<<1)+cur), 0), AFDPART: 'opaque'});
 _rdata.set(RecordType.DS, {key_tag: 'u16', algorithm: 'u8', digest_type: 'u8', digest: 'opaque'});
 _rdata.set(RecordType.SSHFP, {algorithm: 'u8', fp_type: 'u8', fingerprint: 'opaque'});
 _rdata.set(RecordType.IPSECKEY, (d: Tokenizer)=>{

@@ -1,6 +1,5 @@
-import {ErrorCode, RecordType} from "./constants.js";
 import * as constants from "./constants.js";
-import {Response} from "./rfc1035";
+import {ErrorCode, RecordType} from "./constants.js";
 
 export type DNSRecord = {}
 

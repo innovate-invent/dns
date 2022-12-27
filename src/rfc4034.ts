@@ -1,7 +1,7 @@
 import {record, Response, ResponseRecord, serialize} from "./rfc1035.js";
 import {_rdata, RDATA} from "./rfc_rdata.js"
 import {BaseResolver} from "./base_resolver.js";
-import {ALGORITHMS, RecordType} from "./constants.js";
+import {ALGORITHMS, DIGESTS, RecordType} from "./constants.js";
 import {base64url_encode} from "./base64url.js";
 import {JsonWebKey} from "crypto";
 
@@ -76,22 +76,32 @@ async function getKeys(owner: string[], resolver: BaseResolver, keyTag?: number)
 async function getRootDS(): Promise<typeof ROOTDIGESTS> {
     const now = Date.now();
     ROOTDIGESTS = ROOTDIGESTS.filter(d=>d.expires > now);
-    if (ROOTDIGESTS) return ROOTDIGESTS;
+    if (ROOTDIGESTS.length > 0) return ROOTDIGESTS;
 
-    const response = await fetch("https://data.iana.org/root-anchors/root-anchors.xml");
-    const anchor: XMLDocument = await response.text().then(t => new DOMParser().parseFromString(t, 'text/xml'));
+    let response: Awaited<ReturnType<typeof fetch>>;
+    try {
+        response = await fetch("https://iana.pages.dev/root-anchors.xml");
+        // TODO response = await fetch("https://data.iana.org/root-anchors/root-anchors.xml");
+    } catch (e) {
+        // tslint:disable-next-line:no-console
+        console.log("Unable to fetch Root Zone Trust Anchors", e);
+        throw e;
+    }
+    const anchor: XMLDocument = await response.text().then((t: string) => new DOMParser().parseFromString(t, 'text/xml'));
     ROOTDIGESTS = [];
     anchor.querySelectorAll('KeyDigest').forEach(keydigest => {
         // https://www.rfc-editor.org/rfc/rfc7958.html
         // const id = keydigest.getAttribute("id");
         const validFrom = Date.parse(keydigest.getAttribute("validFrom"));
-        const validUntil = keydigest.hasAttribute("validUntil") ? Date.parse(keydigest.getAttribute("validUntil")) : Date.parse(response.headers.get('expires'));
+        let validUntil = now + 259200000;  // 3 days
+        if (keydigest.hasAttribute("validUntil")) validUntil = Date.parse(keydigest.getAttribute("validUntil"));
+        else if (response.headers.has('expires')) validUntil = Date.parse(response.headers.get('expires'));
         if (validFrom <= now && now < validUntil) ROOTDIGESTS.push({
             expires: validUntil,
             key_tag: parseInt(keydigest.querySelector("KeyTag").textContent, 10),
             algorithm: parseInt(keydigest.querySelector("Algorithm").textContent, 10),
             digest_type: parseInt(keydigest.querySelector("DigestType").textContent, 10),
-            digest: Uint8Array.from(keydigest.querySelector("DigestType").textContent.match(/../), c => parseInt(c, 16)).buffer,
+            digest: Uint8Array.from(keydigest.querySelector("Digest").textContent.match(/../g), c => parseInt(c, 16)).buffer,
         });
     });
     return ROOTDIGESTS;
@@ -153,11 +163,17 @@ export async function validateKSK(ksk: ResponseRecord<RecordType.DNSKEY>, resolv
     encoder.next(['string[]', ksk.NAME.map(v=>v.toLowerCase())]);
     encoder.next(['opaque', new Uint8Array(ksk.raw_rdata)]);
 
+    const digests: Record<number, Uint32Array> = {};
     for (const d of ds) {  // Find matching DS
+        digests[d.digest_type] = digests[d.digest_type] || new Uint32Array(await crypto.subtle.digest(DIGESTS[d.digest_type], data));
+        const queryDigest = digests[d.digest_type];
         if (d.key_tag === ksk.RDATA.key_tag &&
-            d.algorithm === ksk.RDATA.algorithm &&
-            d.digest === await crypto.subtle.digest(ALGORITHMS[d.digest_type], data)
-        ) return true;
+            d.algorithm === ksk.RDATA.algorithm) {
+            const refDigest = new Uint32Array(d.digest);
+            if (refDigest.byteLength === queryDigest.byteLength &&
+                refDigest.every((v, i) => v === queryDigest[i])
+            ) return true;
+        }
     }
     return false;
 }
@@ -168,21 +184,41 @@ export async function validateKSK(ksk: ResponseRecord<RecordType.DNSKEY>, resolv
  */
 export async function importDNSKEY(rdata: RDATA[RecordType.DNSKEY]): Promise<CryptoKey> {
     const algorithm = ALGORITHMS[rdata.algorithm];
+    let jwk: JsonWebKey;
     switch (rdata.algorithm) {
+        case 8:
+            // https://datatracker.ietf.org/doc/html/rfc3110#section-2
+            const data = new DataView(rdata.public_key);
+            let eLen = data.getUint8(0);
+            let offset = 1;
+            if (eLen === 0) {
+                eLen = data.getUint16(offset);
+                offset += 2;
+            }
+            jwk = {
+                kty: "RSA",
+                alg: "RS256",  // https://www.rfc-editor.org/rfc/rfc7518#section-3.1
+                use: "sig",
+                e: base64url_encode(rdata.public_key.slice(offset, offset + eLen)),
+                n: base64url_encode(rdata.public_key.slice(offset + eLen)),
+                ext: true,
+            };
+            break;
         case 13:
         case 14:
-            // EDCSA public key is only supported via jwk: https://github.com/diafygi/webcrypto-examples/issues/30
-            const jwk: JsonWebKey = {
+            // ECDSA public key is only supported via jwk: https://github.com/diafygi/webcrypto-examples/issues/30
+            jwk = {
                 kty: "EC",
                 crv: (algorithm as EcKeyImportParams).namedCurve,
                 x: base64url_encode(rdata.public_key.slice(0, rdata.public_key.byteLength/2)),
                 y: base64url_encode(rdata.public_key.slice(rdata.public_key.byteLength/2)),
                 ext: true,
             };
-            return crypto.subtle.importKey("jwk", jwk, algorithm, true, ["verify"]);
+            break;
         default:
-            return crypto.subtle.importKey("raw", rdata.public_key, algorithm, true, ["verify"]);
+            throw new Error(`Unknown key algorithm ${rdata.algorithm}`);
     }
+    return crypto.subtle.importKey("jwk", jwk, algorithm, true, ["verify"]);
 }
 
 /**
@@ -193,7 +229,7 @@ export function labelCount(name: string[]): number {
     let ownerNameLen = name.length;
     // Root (".") has a Labels field value of 0 and
     // The value of the Labels field MUST NOT count either the wildcard label (if present)
-    if (name[0] === '*' || name[0] === '') ownerNameLen--;
+    if (name[0] === '*') ownerNameLen--;
     // or the null (root) label that terminates the owner name
     if (name[name.length - 1] === '') ownerNameLen--;
     return ownerNameLen;
@@ -296,7 +332,7 @@ export function signedData(rrsigRDATA: RDATA[RecordType.RRSIG], rrset: ResponseR
  */
 export default async function validate(response: Response, resolver: BaseResolver) {
     const rrsigs = response.answer.filter(r => r.TYPE === RecordType.RRSIG) as ResponseRecord<RecordType.RRSIG>[];
-    if (!rrsigs) throw new Error('Unable to validate DNSKEY, missing matching RRSIG');
+    if (rrsigs.length === 0) throw new Error('Unable to validate DNSKEY, missing matching RRSIG');
 
     const now = Math.floor(Date.now() / 1000);
 
@@ -309,7 +345,7 @@ export default async function validate(response: Response, resolver: BaseResolve
         return acc;
     }, new Map<string, ResponseRecord<any>[]>()).values());
 
-    return (await Promise.all(rrsets.map(async rrset => {
+    match: for (const rrset of rrsets) {
         const rr = rrset[0];
         // https://datatracker.ietf.org/doc/html/rfc4035#section-5.3.1
         const rrsigMatches = rrsigs.filter(r =>
@@ -321,33 +357,34 @@ export default async function validate(response: Response, resolver: BaseResolve
             r.RDATA.sig_expiration >= now &&  // The validator's notion of the current time MUST be less than or equal to the time listed in the RRSIG RR's Expiration field.
             r.RDATA.sig_inception <= now  // The validator's notion of the current time MUST be greater than or equal to the time listed in the RRSIG RR's Inception field.
         );
+
+        if (rrsigMatches.length === 0) throw new Error(`No matching RRSIG for ${rr}`);
         // The RRSIG RR's Signer's Name, Algorithm, and Key Tag fields MUST match the owner name, algorithm, and key tag for some DNSKEY RR in the zone's apex DNSKEY RRset.
         // The matching DNSKEY RR MUST be present in the zone's apex DNSKEY RRset, and MUST have the Zone Flag bit (DNSKEY RDATA Flag bit 7) set.
-        return Promise.any(rrsigMatches.map(async rrsig=>{
+        for (const rrsig of rrsigMatches) {
             switch (rr.TYPE) { // TODO check rrset CLASS is valid here
                 case RecordType.DNSKEY:
-                    if (rr.NAME.length === 1) {  // Root DNSKEY
-                        // TODO
-
-                    }
                     const ksk = rrset.find(r => r.RDATA.key_tag === rrsig.RDATA.key_tag && r.RDATA.zone_key);
                     if (ksk === undefined) throw new Error('Unable to validate DNSKEY, missing matching KSK');
-                    if (rr.NAME.join('.').endsWith(rrsig.RDATA.signer.join('.'))) throw new Error('Unable to validate DNSKEY, RRSIG signer mismatch');
+                    if (!rr.NAME.join('.').endsWith(rrsig.RDATA.signer.join('.'))) throw new Error('Unable to validate DNSKEY, RRSIG signer mismatch');
                     if (!await validateKSK(ksk, resolver)) throw new Error('Unable to validate DNSKEY, Invalid KSK');
                     // Verify rrset with KSK
                     const key = await importDNSKEY(ksk.RDATA);
-                    return verifyRRSIG([key], rrsig.RDATA, rrset);
+                    if (await verifyRRSIG([key], rrsig.RDATA, rrset)) continue match;
+                    break;
                 case RecordType.DS:
-                    // The DS record contains a digest of your DNSSEC Key Signing Key (KSK), and acts as a pointer to the next key in the chain of trust.
-                    // tslint:disable-next-line
-                    // debugger;
-                    // break;
+                // The DS record contains a digest of your DNSSEC Key Signing Key (KSK), and acts as a pointer to the next key in the chain of trust.
+                // tslint:disable-next-line
+                // debugger;
+                // break;
                 default:
                     // The RRSIG RR's Signer's Name, Algorithm, and Key Tag fields MUST match the owner name, algorithm, and key tag for some DNSKEY RR in the zone's apex DNSKEY RRset.
-                    const zsk = await getKeys(rrsig.NAME, resolver, rrsig.RDATA.key_tag);
+                    const zsk = await getKeys(rrsig.RDATA.signer, resolver, rrsig.RDATA.key_tag);
                     if (!zsk) throw new Error('Unable to validate RRSIG, no valid ZSK');
-                    return verifyRRSIG(zsk, rrsig.RDATA, rrset);
+                    if (await verifyRRSIG(zsk, rrsig.RDATA, rrset)) continue match;
             }
-        }));
-    }))).every(x => x)
+        }
+        return false;
+    }
+    return true;
 }

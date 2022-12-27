@@ -24,7 +24,7 @@ import {
     SRVRecord,
 } from './dns.js'
 import {RecordType} from "./constants.js";
-import {AnswerRecord, buildRequest, parseResponse, Question, ResponseRecord} from "./rfc1035.js";
+import {AnswerRecord, buildRequest, parseResponse, Question} from "./rfc1035.js";
 import {RDATA} from "./rfc_rdata.js"
 import validate from "./rfc4034.js";
 import {base64url_encode} from "./base64url.js"
@@ -70,17 +70,19 @@ export default class Resolver extends BaseResolver {
         const payload = base64url_encode(buildRequest([question], undefined, options && options.dnssec));
         const url = `https://${this.getServers()[0]}/dns-query?dns=${payload}`;
         let rawResponse: Response;
-        const cache = await caches.open(CACHE_NAME);
 
+        // Check cached records
+        const cache = await caches.open(CACHE_NAME);
         rawResponse = await cache.match(url);
         if (rawResponse) {
             const expires = rawResponse.headers.get('Expires');
-            if (expires && new Date(expires) < new Date()) {
+            if (!expires || new Date(expires) < new Date()) {
                 cache.delete(url);
                 rawResponse = null;
             }
         }
 
+        // Fetch records on cache miss
         if (!rawResponse) {
             rawResponse = await this._fetch(url, {headers: new Headers({'accept': 'application/dns-message'})});
         }
@@ -92,12 +94,20 @@ export default class Resolver extends BaseResolver {
             if (Object.entries(question).some(([k,v])=>Array.isArray(v) ? v.some((e, i)=>e !== (q[k as keyof Question] as any[])[i]) : q[k as keyof Question] !== v)) throw new Error('DNS query in response does not match original query');
         } else throw new Error('Unable to validate DNS query from response');
 
+        // Cache response with expires set to the smallest record TTL
         const minTTL = response.answer.reduce((acc, cur)=>acc > cur.TTL ? cur.TTL : acc, 604800);
+        rawResponse = new Response(rawResponse.body, {
+            status: rawResponse.status,
+            statusText: rawResponse.statusText,
+            headers: new Headers(rawResponse.headers),
+        });
         rawResponse.headers.set('Expires', new Date(Date.now() + (minTTL * 1000)).toUTCString());
         cache.put(url, rawResponse);
-        if (options && options.dnssec && !await validate(response, this)) throw new Error('DNSSEC validation failed'); // verify DNSSEC
+
+        if (options && options.dnssec && !await validate(response, this)) throw new Error(`DNSSEC validation for ${rrtype} from ${hostname} failed`); // verify DNSSEC
         if (options && options.raw) return response;
 
+        // NodeJS dns lib compatibility return values
         switch (rrtype) {
             case 'A':
             case 'AAAA':

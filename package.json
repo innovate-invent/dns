@@ -30,11 +30,11 @@
     "prebuild": "npm run clean && npm run lint",
     "build": "rollup -c",
     "build:test": "TARGET=test npm run build",
-    "start": "TARGET=test rollup -w -c",
+    "start": "CHROME_BIN=chromium TARGET=test karma start karma.conf.cjs",
     "lint": "tslint src/*.ts",
     "clean": "rm -rf dist",
     "test:compat": "ts-mocha -p tsconfig.node.json spec/nodejs.spec.ts",
-    "test": "ts-mocha -p tsconfig.test.json",
+    "test": "karma start --single-run --browsers ChromeHeadless karma.conf.cjs",
     "publish": "npm publish --access public"
   },
   "devDependencies": {
@@ -55,7 +55,14 @@
     "typescript": "^4.7.4",
     "uglifyjs": "^2.4.11",
     "rollup-plugin-sourcemaps": "^0.6.3",
-    "mocha-headless-chrome": "^4.0.0"
+    "mocha-headless-chrome": "^4.0.0",
+    "karma": "^6.4.1",
+    "karma-chrome-launcher": "^3.1.1",
+    "karma-mocha": "^2.0.1",
+    "karma-chai": "^0.1.0",
+    "karma-rollup-preprocessor": "^7.0.8",
+    "karma-typescript": "^5.5.3",
+    "karma-coverage": "^2.2.0"
   },
   "dependencies": {}
 }

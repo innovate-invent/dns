@@ -7,10 +7,11 @@ import expected from "./expected.js";
 import {cmp} from "./common.js";
 import {RecordType} from "../src/constants.js";
 
+// tslint:disable:no-unused-expression
 
-function test(f: (host: string, cb: (err?: DNSError, addresses?: any[])=>void)=>void, rrval: keyof typeof RecordType | 'ANY'): void {
+function testRRType(f: (host: string, cb: (err?: DNSError, addresses?: any[])=>void)=>void, rrval: keyof typeof RecordType | 'ANY'): void {
     const e = expected[rrval];
-    it(`should resolve ${rrval} records from ${e.host}`, function (done) {
+    it(`should resolve ${rrval} records from ${e.host}`, done => {
         function cb(err?: DNSError, addresses?: any[]) {
             try {
                 if (!Array.isArray(addresses)) addresses = [addresses] as any[];
@@ -26,8 +27,8 @@ function test(f: (host: string, cb: (err?: DNSError, addresses?: any[])=>void)=>
     });
 }
 
-describe('dns', function() {
-    describe('lookup', function () {
+describe('dns', () => {
+    describe('lookup', () => {
         type Options = 4 | 6 | { family: 4 | 6 | 0, hints?: number, all?: boolean, verbatim?: boolean };
         [
             {name: 'no options', hostname: expected.A.host, options: undefined, address: expected.A.records, family: 4},
@@ -35,8 +36,8 @@ describe('dns', function() {
             {name: '{family: 4}', hostname: expected.A.host, options: {family: 4}, address: expected.A.records, family: 4},
             {name: '6', hostname: expected.AAAA.host, options: 6, address: expected.AAAA.records, family: 6},
             {name: '{family: 6}', hostname: expected.AAAA.host, options: {family: 6}, address: expected.AAAA.records, family: 6},
-        ].forEach(function (test) {
-            it(`should return ipv${test.family} of ${test.hostname} given ${test.name}`, function(done){
+        ].forEach(test => {
+            it(`should return ipv${test.family} of ${test.hostname} given ${test.name}`, done => {
                 function cb(err?: DNSError, address?: string, family?: number) {
                     try {
                         expect(err).to.be.undefined;
@@ -53,25 +54,25 @@ describe('dns', function() {
         });
     });
 
-    describe('lookupService', function () {
-        it('should throw NOTIMP', function () {
-            expect(()=>dns.lookupService('', 0, (err, hostname1, service) => {})).to.throw(DNSError.NOTIMP);
+    describe('lookupService', () => {
+        it('should throw NOTIMP', () => {
+            expect(()=>dns.lookupService('', 0, (err, hostname1, service) => undefined)).to.throw(DNSError.NOTIMP);
         });
     });
 
-    describe('getServers', function(){
-        it('should return default CloudFlare server', function () {
+    describe('getServers', () => {
+        it('should return default CloudFlare server', () => {
             expect(dns.getServers()).to.eql(['cloudflare-dns.com']);
         })
     });
 
-    describe('resolve', function(){
+    describe('resolve', () => {
         [
             {hostname: expected.A.host, rrval: undefined, result: expected.A.records},
             {hostname: expected.A.host, rrval: 'ANY', result: [], pending: true},
             ...Object.entries(expected).map(([rrval, v]: [string, {host: string, records: any[], cmp?: string[], pending?:boolean}])=>({hostname: v.host, rrval, result: v.records, cmp:v.cmp, pending:v.pending}))
-        ].forEach(function (test: {hostname: string, rrval: string, result: any[], cmp?:string[], pending?:boolean}) {
-            it(`should resolve ${test.rrval || 'A'} records for ${test.hostname} given rrval: ${test.rrval}`, test.pending ? undefined : function (done) {
+        ].forEach((test: { hostname: string, rrval: string, result: any[], cmp?: string[], pending?: boolean }) => {
+            it(`should resolve ${test.rrval || 'A'} records for ${test.hostname} given rrval: ${test.rrval}`, test.pending ? undefined : done => {
                 function cb(err?: DNSError, records?: any[] | SOARecord) {
                     try {
                         if (!Array.isArray(records)) records = [records] as any[];
@@ -92,12 +93,12 @@ describe('dns', function() {
         });
     });
 
-    describe('resolve4', function(){
+    describe('resolve4', () => {
         [
             {hostname: expected.A.host, result: expected.A.records, options: undefined},
             {hostname: expected.A.host, result: expected.A.records, options: {ttl: true}},
-        ].forEach(function (test) {
-            it(`should resolve A records for ${test.hostname} with ttl: ${test.options && test.options.ttl}`, function(done){
+        ].forEach(test => {
+            it(`should resolve A records for ${test.hostname} with ttl: ${test.options && test.options.ttl}`, done => {
                 function cb(err?: DNSError, addresses?: string[] | {address: string, ttl: boolean}[]) {
                     try {
                         expect(err).to.be.undefined;
@@ -116,16 +117,17 @@ describe('dns', function() {
         });
     });
 
-    describe('resolve6', function(){
+    describe('resolve6', () => {
         [
             {hostname: expected.AAAA.host, result: expected.AAAA.records, options: undefined},
             {hostname: expected.AAAA.host, result: expected.AAAA.records, options: {ttl: true}},
-        ].forEach(function (test) {
-            it(`should resolve AAAA records for ${test.hostname} with ttl: ${test.options && test.options.ttl}`, function(done){
+        ].forEach(test => {
+            it(`should resolve AAAA records for ${test.hostname} with ttl: ${test.options && test.options.ttl}`, done => {
                 function cb(err?: DNSError, addresses?: string[] | {address: string, ttl: boolean}[]) {
                     try {
-                        addresses.sort();
                         expect(err).to.be.undefined;
+                        expect(addresses).to.not.be.undefined;
+                        addresses.sort();
                         if (test.options && test.options.ttl) {
                             addresses = (addresses as {address: string, ttl: boolean}[]).map(a=>{expect(a.ttl).to.be.an('number'); return a.address});
                         }
@@ -141,56 +143,56 @@ describe('dns', function() {
         });
     });
 
-    describe('resolveAny', function(){
-        xit('should resolve ANY records', function (done) {
+    describe('resolveAny', () => {
+        xit('should resolve ANY records', done => {
             // Service doesnt support, can't actually test
         });
     });
 
-    describe('resolveCname', function(){
-        test(dns.resolveCname, 'CNAME');
+    describe('resolveCname', () => {
+        testRRType(dns.resolveCname, 'CNAME');
     });
 
-    describe('resolveCaa', function(){
-        test(dns.resolveCaa, 'CAA');
+    describe('resolveCaa', () => {
+        testRRType(dns.resolveCaa, 'CAA');
     });
 
-    describe('resolveMx', function(){
-        test(dns.resolveMx, 'MX');
+    describe('resolveMx', () => {
+        testRRType(dns.resolveMx, 'MX');
     });
 
-    describe('resolveNaptr', function(){
-        test(dns.resolveNaptr, 'NAPTR');
+    describe('resolveNaptr', () => {
+        testRRType(dns.resolveNaptr, 'NAPTR');
     });
 
-    describe('resolveNs', function(){
-        test(dns.resolveNs, 'NS');
+    describe('resolveNs', () => {
+        testRRType(dns.resolveNs, 'NS');
     });
 
-    describe('resolvePtr', function(){
-        test(dns.resolvePtr, 'PTR');
+    describe('resolvePtr', () => {
+        testRRType(dns.resolvePtr, 'PTR');
     });
 
-    describe('resolveSoa', function(){
-        test(dns.resolveSoa, 'SOA');
+    describe('resolveSoa', () => {
+        testRRType(dns.resolveSoa, 'SOA');
     });
 
-    describe('resolveSrv', function(){
-        test(dns.resolveSrv, 'SRV');
+    describe('resolveSrv', () => {
+        testRRType(dns.resolveSrv, 'SRV');
     });
 
-    describe('resolveTxt', function(){
-        test(dns.resolveTxt, 'TXT');
+    describe('resolveTxt', () => {
+        testRRType(dns.resolveTxt, 'TXT');
     });
 
-    describe('reverse', function(){
-        it('should throw NOTIMP', function () {
+    describe('reverse', () => {
+        it('should throw NOTIMP', () => {
             expect(()=>dns.reverse()).to.throw(DNSError.NOTIMP);
         })
     });
 
-    describe('setServers', function(){
-        it('should change the server that the default (CloudFlare) resolver makes requests to', function () {
+    describe('setServers', () => {
+        it('should change the server that the default (CloudFlare) resolver makes requests to', () => {
             const old = dns.getServers();
             dns.setServers(['example.org']);
             expect(dns.getServers()).to.eql(dns.getServers());
