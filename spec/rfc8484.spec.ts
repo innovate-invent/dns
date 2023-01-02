@@ -20,7 +20,7 @@ describe('RFC8484 Resolver', () => {
     describe('resolve', () => {
         const resolver = new Resolver();
         [
-            /* {hostname: expected.A.host, rrval: undefined, result: expected.A.records},
+            {hostname: expected.A.host, rrval: undefined, result: expected.A.records},
             {hostname: expected.A.host, rrval: 'ANY', result: [], pending: true},
             {hostname: expected.A.host, rrval: 'A', result: {
                     "header": {"ID": 0, "QR": 1, "Opcode": 0, "AA": 0, "TC": 0, "RD": 1, "RA": 1, "AD": 0, "CD": 0, "RCODE": 0, "QDCOUNT": 1, "ANCOUNT": 1, "NSCOUNT": 0, "ARCOUNT": 0, "Z": 0},
@@ -29,8 +29,8 @@ describe('RFC8484 Resolver', () => {
                     "authority": [],
                     "additional": []
                 }, options: {raw: true}},
-            */{hostname: expected.A.host, rrval: 'A', result: expected.A.records, options: {dnssec: true}} as Test,
-            // ...Object.entries(expected).map(([rrval, v])=>({hostname: v.host, rrval, result: v.records, cmp:v.cmp, pending:v.pending, options: v.options} as Test))
+            {hostname: expected.A.host, rrval: 'A', result: expected.A.records, options: {dnssec: true}} as Test,
+            ...Object.entries(expected).map(([rrval, v])=>({hostname: v.host, rrval, result: v.records, cmp:v.cmp, pending:v.pending, options: v.options} as Test))
         ].forEach((test: Test) => {
             it(`should resolve ${test.rrval || 'A'} records for ${test.hostname} given rrval: ${test.rrval} and options: ${JSON.stringify(test.options)}`, test.pending ? undefined : async () => {
                 const args: [any] = [test.hostname];

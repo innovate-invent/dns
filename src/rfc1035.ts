@@ -1,6 +1,7 @@
 import {RecordType} from "./constants.js";
 import RDATA, {RDATA as RDATATypes} from "./rfc_rdata.js"
 
+// tslint:disable:no-bitwise
 export interface Header {
     ID: number,
     QR: 0|1,
@@ -488,6 +489,8 @@ export function* serialize(data: ArrayBuffer): Generator<number, undefined, [Tok
                 if (val instanceof Uint8Array) {
                     val.forEach((v, i)=>view.setUint8(byteOffset + i, v));
                     len += val.length * 8;
+                } else {
+                    throw new TypeError("opaque value must be Uint8Array");
                 }
                 break;
             default:

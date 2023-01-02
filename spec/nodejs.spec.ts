@@ -10,15 +10,15 @@ import {RecordType} from "../src/constants";
 
 type Test = {hostname: string, rrval?: (keyof typeof RecordType) | 'ANY', result: any[], cmp?:string[], pending?:boolean, fails?: boolean};
 
-describe('NodeJS DNS Resolver', function () {
-    describe('resolve', function(){
+describe('NodeJS DNS Resolver', () => {
+    describe('resolve', () => {
         const resolver = new promises.Resolver();
         [
             {hostname: expected.A.host, rrval: undefined, result: expected.A.records},
             {hostname: expected.A.host, rrval: 'ANY', result: [], fails: true},
             ...Object.entries(expected).map(([rrval, v])=>({hostname: v.host, rrval, result: v.records, cmp:v.cmp, pending:false} as Test))
-        ].forEach(function (test: Test) {
-            it(`should resolve ${test.rrval || 'A'} records for ${test.hostname} given rrval: ${test.rrval}`, test.pending ? undefined : async function () {
+        ].forEach((test: Test) => {
+            it(`should resolve ${test.rrval || 'A'} records for ${test.hostname} given rrval: ${test.rrval}`, test.pending ? undefined : async () => {
                 try {
                     let records = await (test.rrval ? resolver.resolve(test.hostname, test.rrval) : resolver.resolve(test.hostname));
                     if (!Array.isArray(records)) records = [records] as any[];
