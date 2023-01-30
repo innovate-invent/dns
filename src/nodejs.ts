@@ -54,7 +54,7 @@ function ipString(type: RecordType, ip: number[]): string {
 export function toNodeJSResponse(answer: AnswerRecord<any>[], rrtype: string, options?: ResolveOptions): any {
     let rrset = answer.filter(r => r.TYPE !== RecordType.RRSIG);
     if (rrtype in RecordType) {
-        rrset = answer.filter(r => r.TYPE === RecordType.A || r.TYPE === RecordType.AAAA);
+        rrset = answer.filter(r => r.TYPE === RecordType[rrtype as unknown as RecordType]);
     }
 
     switch (rrtype) {

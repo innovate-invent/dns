@@ -9,16 +9,27 @@ import {
     SOARecord,
     SRVRecord
 } from "./dns.js";
-import {CANCELLED, RecordType} from "./constants.js";
+import {RecordType} from "./constants.js";
 
+export type BaseResolverOptions = { timeout?: number, tries?: number };
 // tslint:disable-next-line no-empty-interface
 export interface BaseResolver extends PromiseResolver {} // Allows partial implementation of PromiseResolver in abstract class using declaration merging
 export abstract class BaseResolver implements PromiseResolver {
     private readonly _timeout: number = -1;
+    private readonly _tries: number = 4;
     protected servers: string[];
 
-    constructor(options?: { timeout: number }) {
-        if (options) this._timeout = options.timeout;
+    constructor(options?: BaseResolverOptions) {
+        if (!options) return;
+        if (options.timeout !== undefined)
+        if (!Number.isInteger(options.timeout)) throw new TypeError("timeout must be an integer");
+        else if (options.timeout < -1) throw new RangeError("timeout must be >= -1");
+        else this._timeout = options.timeout;
+
+        if (options.tries !== undefined)
+        if (!Number.isInteger(options.tries)) throw new TypeError("tries must be an integer");
+        else if (options.tries < 1) throw new RangeError("tries must be >= 1");
+        else this._tries = options.tries;
     }
 
     _pending: Set<AbortController> = new Set();
@@ -29,7 +40,7 @@ export abstract class BaseResolver implements PromiseResolver {
     }
 
     /**
-     * Fetch with abort
+     * Fetch with abort, timeout, and retry
      * @param resource URL of resource to fetch
      * @param options RequestInit options to forward to fetch
      * @protected
@@ -38,19 +49,34 @@ export abstract class BaseResolver implements PromiseResolver {
         const controller = new AbortController();
         let id;
         this._pending.add(controller);
-        if (this._timeout !== -1) id = setTimeout(() => controller.abort(), this._timeout);
 
         try {
-            return await fetch(resource, {
-                ...options,
-                signal: controller.signal
-            });
-        } catch (e) {
-            if (e.name === 'AbortError') throw new DNSError('request was cancelled', CANCELLED);
-            throw e;
+            for (let _try = this._tries; _try > 0; --_try) {
+                let timeout = false;
+                if (this._timeout !== -1) id = setTimeout(() => {timeout = true; controller.abort();}, this._timeout);
+                try {
+                    return await fetch(resource, {
+                        ...options,
+                        signal: controller.signal
+                    });
+                } catch (e) {
+                    if (e.name === 'AbortError') {
+                        if (timeout) throw DNSError.TIMEOUT;
+                        throw DNSError.CANCELLED;
+                    }
+                    if (_try > 0) continue;
+                    // TODO translate e to DNSErrors
+                    switch (e.name) {
+                        case '':
+
+                    }
+                    throw e;
+                } finally {
+                    if (id) clearTimeout(id);
+                }
+            }
         } finally {
             this._pending.delete(controller);
-            if (id) clearTimeout(id);
         }
     }
 

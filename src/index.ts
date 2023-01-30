@@ -13,6 +13,7 @@ import {
 } from './dns.js'
 import RFCResolver from './rfc8484.js'
 import * as constants from './constants.js'
+import {BaseResolver, BaseResolverOptions} from "./base_resolver";
 
 /**
  * Wrapper around Promise based Resolver implementations to support callback interface.
@@ -22,13 +23,13 @@ import * as constants from './constants.js'
 class CallbackResolver implements Resolver {
     _resolver: PromiseResolver;
 
-    constructor(options?: { timeout: number; } | PromiseResolver) {
+    constructor(options?: BaseResolverOptions | PromiseResolver) {
         if (options === undefined) {
             this._resolver = new RFCResolver();
-        } else if ('timeout' in options) {
-            this._resolver = new RFCResolver(options);
-        } else {
+        } else if (options instanceof BaseResolver) {
             this._resolver = options;
+        } else {
+            this._resolver = new RFCResolver(options as BaseResolverOptions);
         }
     }
 

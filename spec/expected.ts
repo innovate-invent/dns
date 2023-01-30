@@ -3,6 +3,7 @@ import {ResolveOptions} from "../src/dns";
 
 export type Expected = {host: string, records: any[], cmp?: string[], pending?: boolean, options?: ResolveOptions};
 
+// TODO error codes
 export const nodeTypes = { // The expected values here should be identical to what NodeJS DNS returns
     "SOA": {
         host: "i2labs.ca.",

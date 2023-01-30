@@ -1,11 +1,10 @@
 import dns from '../src/index.js'
-import {DNSError, ResolveOptions, SOARecord} from "../src/dns.js";
-
-const expect = chai.expect;
-
+import {DNSError, SOARecord} from "../src/dns.js";
 import expected from "./expected.js";
 import {cmp} from "./common.js";
 import {RecordType} from "../src/constants.js";
+
+const expect = chai.expect;
 
 // tslint:disable:no-unused-expression
 
@@ -187,15 +186,16 @@ describe('dns', () => {
 
     describe('reverse', () => {
         it('should throw NOTIMP', () => {
-            expect(()=>dns.reverse()).to.throw(DNSError.NOTIMP);
+            expect(()=>dns.reverse('example.com')).to.throw(DNSError.NOTIMP);
         })
     });
 
     describe('setServers', () => {
         it('should change the server that the default (CloudFlare) resolver makes requests to', () => {
             const old = dns.getServers();
-            dns.setServers(['example.org']);
-            expect(dns.getServers()).to.eql(dns.getServers());
+            const updated = ['example.org'];
+            dns.setServers(updated);
+            expect(dns.getServers()).to.eql(updated);
             dns.setServers(old);
         })
     });

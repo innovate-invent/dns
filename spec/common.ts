@@ -1,4 +1,4 @@
-const expect = chai.expect;
+import {expect} from 'chai';
 
 export function cmp(expected: any[], result: any[], keys: string[]): void {
     if (keys) {

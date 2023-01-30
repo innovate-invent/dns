@@ -1,5 +1,6 @@
 import * as constants from "./constants.js";
 import {ErrorCode, RecordType} from "./constants.js";
+import {DNSResponse} from "./rfc1035";
 
 export type DNSRecord = {}
 
@@ -116,9 +117,11 @@ export interface AnySRVRecord extends SRVRecord {
 
 export class DNSError extends Error {
     code: ErrorCode;
-    constructor(message: string, code: ErrorCode) {
+    response?: DNSResponse;
+    constructor(message: string, code: ErrorCode, response?: DNSResponse) {
         super(message);
         this.code = code;
+        this.response = response;
     }
 
     static readonly NODATA = new DNSError('DNS server returned answer with no data', constants.NODATA);
@@ -197,23 +200,23 @@ export interface PromiseResolver {
     getServers(): string[];
     setServers(servers: string[]): void;
 
-    resolve(hostname: string, rrtype: "ANY", options?: {raw: false}): Promise<AnyDNSRecord[]>;
-    resolve(hostname: string, rrtype: "CAA", options?: {raw: false}): Promise<CAARecord[]>;
-    resolve(hostname: string, rrtype: "MX", options?: {raw: false}): Promise<MXRecord[]>;
-    resolve(hostname: string, rrtype: "NAPTR", options?: {raw: false}): Promise<NAPTRRecord[]>;
-    resolve(hostname: string, rrtype: "SOA", options?: {raw: false}): Promise<SOARecord>;
-    resolve(hostname: string, rrtype: "SRV", options?: {raw: false}): Promise<SRVRecord[]>;
-    resolve(hostname: string, rrtype: "TXT", options?: {raw: false}): Promise<string[][]>;
-    resolve(hostname: string, rrtype?: "A"|"AAAA"|"CNAME"|"NS"|"PTR", options?: {raw: false}): Promise<string[]>;
-    resolve(hostname: string, rrtype: keyof typeof RecordType, options: {raw: true}): Promise<any>;
-    resolve(hostname: string, rrtype: "A", options: {ttl:true, raw: false}): Promise<ARecord[]>;
-    resolve(hostname: string, rrtype: "AAAA", options: {ttl:true, raw: false}): Promise<AAAARecord[]>;
+    resolve(hostname: string, rrtype: "ANY", options?: ResolveOptions & {raw: false}): Promise<AnyDNSRecord[]>;
+    resolve(hostname: string, rrtype: "CAA", options?: ResolveOptions & {raw: false}): Promise<CAARecord[]>;
+    resolve(hostname: string, rrtype: "MX", options?: ResolveOptions & {raw: false}): Promise<MXRecord[]>;
+    resolve(hostname: string, rrtype: "NAPTR", options?: ResolveOptions & {raw: false}): Promise<NAPTRRecord[]>;
+    resolve(hostname: string, rrtype: "SOA", options?: ResolveOptions & {raw: false}): Promise<SOARecord>;
+    resolve(hostname: string, rrtype: "SRV", options?: ResolveOptions & {raw: false}): Promise<SRVRecord[]>;
+    resolve(hostname: string, rrtype: "TXT", options?: ResolveOptions & {raw: false}): Promise<string[][]>;
+    resolve(hostname: string, rrtype?: "A"|"AAAA"|"CNAME"|"NS"|"PTR", options?: ResolveOptions & {raw: false}): Promise<string[]>;
+    resolve(hostname: string, rrtype: keyof typeof RecordType, options: ResolveOptions & {raw: true}): Promise<any>;
+    resolve(hostname: string, rrtype: "A", options: ResolveOptions & {ttl:true, raw: false}): Promise<ARecord[]>;
+    resolve(hostname: string, rrtype: "AAAA", options: ResolveOptions & {ttl:true, raw: false}): Promise<AAAARecord[]>;
 
-    resolve4(hostname: string, options: { ttl: true }): Promise<ARecord[]>;
-    resolve4(hostname: string, options?: { ttl: false }): Promise<string[]>;
+    resolve4(hostname: string, options: ResolveOptions & { ttl: true }): Promise<ARecord[]>;
+    resolve4(hostname: string, options?: ResolveOptions & { ttl: false }): Promise<string[]>;
 
-    resolve6(hostname: string, options: { ttl: true }): Promise<AAAARecord[]>;
-    resolve6(hostname: string, options?: { ttl: false }): Promise<string[]>;
+    resolve6(hostname: string, options: ResolveOptions & { ttl: true }): Promise<AAAARecord[]>;
+    resolve6(hostname: string, options?: ResolveOptions & { ttl: false }): Promise<string[]>;
 
     resolveAny(hostname: string): Promise<AnyDNSRecord[]>;
     resolveCaa(hostname: string): Promise<{critical: number, iodef?: string, issue?: string}[]>;

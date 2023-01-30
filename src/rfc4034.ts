@@ -1,9 +1,12 @@
-import {record, Response, ResponseRecord, serialize} from "./rfc1035.js";
+import {AuthorityRecord, record, DNSResponse, ResponseRecord, serialize, Question} from "./rfc1035.js";
+import * as constants from "./constants.js";
 import {_rdata, RDATA} from "./rfc_rdata.js"
 import {BaseResolver} from "./base_resolver.js";
 import {ALGORITHMS, DIGESTS, RecordType} from "./constants.js";
 import {base64url_encode} from "./base64url.js";
 import {JsonWebKey} from "crypto";
+import CryptoKey = module;
+import {DNSError} from "./dns";
 
 // RRSIG - Contains a cryptographic signature signed by ZSK
 // DNSKEY - Contains a public signing key. KSK or ZSK with zone_key flag set
@@ -45,7 +48,7 @@ async function getKeys(owner: string[], resolver: BaseResolver, keyTag?: number)
             delete SESSIONKEYCACHE[label];
             return [];
         }
-        if (keyTag !== undefined) return keys.keys.filter((k, i)=>keys.keyTags[i] === keyTag);
+        if (keyTag !== undefined) return keys.keys.filter((k, i) => keys.keyTags[i] === keyTag);
         return keys.keys;
     }
 
@@ -53,16 +56,16 @@ async function getKeys(owner: string[], resolver: BaseResolver, keyTag?: number)
     const response = (await resolver.resolve(owner.join('.'), 'DNSKEY', {
         raw: true,
         dnssec: true
-    }) as Response).answer;
+    }) as DNSResponse).answer;
     const keyResponse = response.filter(r => r.TYPE === RecordType.DNSKEY && (r as ResponseRecord<RecordType.DNSKEY>).RDATA.zone_key) as ResponseRecord<RecordType.DNSKEY>[];
-    const keys = await Promise.all(keyResponse.map(k=>importDNSKEY(k.RDATA)));
-    const keyTags = keyResponse.map(k=>k.RDATA.key_tag);
-    const kskI = keyResponse.findIndex(k=>k.RDATA.secure_entry_point);
-    const expires = (keyResponse.reduce((acc, cur)=>acc < cur.TTL ? acc : cur.TTL, 604800) * 1000) + now;  // Expires on lowest TTL + now
+    const keys = await Promise.all(keyResponse.map(k => importDNSKEY(k.RDATA)));
+    const keyTags = keyResponse.map(k => k.RDATA.key_tag);
+    const kskI = keyResponse.findIndex(k => k.RDATA.secure_entry_point);
+    const expires = (keyResponse.reduce((acc, cur) => acc < cur.TTL ? acc : cur.TTL, 604800) * 1000) + now;  // Expires on lowest TTL + now
 
     // Move KSK to end of list
-    [keys[keys.length-1], keys[kskI]] = [keys.at(kskI), keys.at(-1)];
-    [keyTags[keys.length-1], keyTags[kskI]] = [keyTags.at(kskI), keyTags.at(-1)];
+    [keys[keys.length - 1], keys[kskI]] = [keys.at(kskI), keys.at(-1)];
+    [keyTags[keys.length - 1], keyTags[kskI]] = [keyTags.at(kskI), keyTags.at(-1)];
 
     SESSIONKEYCACHE[label] = {
         keys,
@@ -70,7 +73,7 @@ async function getKeys(owner: string[], resolver: BaseResolver, keyTag?: number)
         keyTags,
     };
 
-    return keys.filter((_, i)=>keyTag === undefined || keyTags[i] === keyTag);
+    return keys.filter((_, i) => keyTag === undefined || keyTags[i] === keyTag);
 }
 
 /**
@@ -79,7 +82,7 @@ async function getKeys(owner: string[], resolver: BaseResolver, keyTag?: number)
  */
 async function getRootDS(): Promise<typeof ROOTDIGESTS> {
     const now = Date.now();
-    ROOTDIGESTS = ROOTDIGESTS.filter(d=>d.expires > now);
+    ROOTDIGESTS = ROOTDIGESTS.filter(d => d.expires > now);
     if (ROOTDIGESTS.length > 0) return ROOTDIGESTS;
 
     let response: Awaited<ReturnType<typeof fetch>>;
@@ -123,7 +126,7 @@ async function getStoredDS(owner: string[], resolver: BaseResolver): Promise<Cac
     const now = Date.now();
     const label = owner.join('.');
     if (label in SESSIONDSCACHE) {
-        const ds = SESSIONDSCACHE[label].filter(d=>d.expires > now);
+        const ds = SESSIONDSCACHE[label].filter(d => d.expires > now);
         SESSIONDSCACHE[label] = ds;
         return ds;
     }
@@ -132,7 +135,7 @@ async function getStoredDS(owner: string[], resolver: BaseResolver): Promise<Cac
     const response = await resolver.resolve(owner.join('.'), "DS", {
         raw: true,
         dnssec: true
-    }) as Response;
+    }) as DNSResponse;
     const dsrecords = response.answer.filter(r => r.TYPE === RecordType.DS) as ResponseRecord<RecordType.DS>[];
     if (!dsrecords || dsrecords.length === 0) return [];
 
@@ -161,10 +164,10 @@ export async function validateKSK(ksk: ResponseRecord<RecordType.DNSKEY>, resolv
 
     // digest = digest_algorithm( DNSKEY owner name | DNSKEY RDATA);
     // DNSKEY RDATA = Flags | Protocol | Algorithm | Public Key.  "|" denotes concatenation
-    const data = new ArrayBuffer(ksk.raw_rdata.byteLength + ksk.NAME.length + ksk.NAME.reduce((acc, cur)=>acc + cur.length, 0));
+    const data = new ArrayBuffer(ksk.raw_rdata.byteLength + ksk.NAME.length + ksk.NAME.reduce((acc, cur) => acc + cur.length, 0));
     const encoder = serialize(data);
     encoder.next();
-    encoder.next(['string[]', ksk.NAME.map(v=>v.toLowerCase())]);
+    encoder.next(['string[]', ksk.NAME.map(v => v.toLowerCase())]);
     encoder.next(['opaque', new Uint8Array(ksk.raw_rdata)]);
 
     const digests: Record<number, Uint32Array> = {};
@@ -201,15 +204,6 @@ export async function importDNSKEY(rdata: RDATA[RecordType.DNSKEY]): Promise<Cry
             }
             const e = rdata.public_key.slice(offset, offset + eLen);  // Exponent
             const n = rdata.public_key.slice(offset + eLen);  // Modulus
-            /*jwk = {
-                kty: "RSA",
-                alg: "RS256",  // https://www.rfc-editor.org/rfc/rfc7518#section-3.1
-                use: "sig",
-                e: base64url_encode(e),
-                n: base64url_encode(n),
-                ext: true,
-            };
-            break;*/
             // https://stackoverflow.com/a/19030716
             // https://www.rfc-editor.org/rfc/rfc3279
             let spki;
@@ -228,8 +222,6 @@ export async function importDNSKEY(rdata: RDATA[RecordType.DNSKEY]): Promise<Cry
                 v.setUint8(20, v.byteLength - 21);
                 v.setUint8(24, v.byteLength - 25);
             }
-            const foo = await crypto.subtle.generateKey({ "name": "RSASSA-PKCS1-v1_5", hash: "SHA-256", "modulusLength": 1024, "publicExponent": new Uint8Array([0x01, 0x00, 0x01])}, true, ['verify', 'sign']);
-            const bar = await crypto.subtle.exportKey('spki', foo.publicKey);
 
             return crypto.subtle.importKey("spki", spki, algorithm, true, ["verify"]);
         case 13:
@@ -238,15 +230,14 @@ export async function importDNSKEY(rdata: RDATA[RecordType.DNSKEY]): Promise<Cry
             jwk = {
                 kty: "EC",
                 crv: (algorithm as EcKeyImportParams).namedCurve,
-                x: base64url_encode(rdata.public_key.slice(0, rdata.public_key.byteLength/2)),
-                y: base64url_encode(rdata.public_key.slice(rdata.public_key.byteLength/2)),
+                x: base64url_encode(rdata.public_key.slice(0, rdata.public_key.byteLength / 2)),
+                y: base64url_encode(rdata.public_key.slice(rdata.public_key.byteLength / 2)),
                 ext: true,
             };
-            break;
+            return crypto.subtle.importKey("jwk", jwk, algorithm, true, ["verify"]);
         default:
             throw new Error(`Unknown key algorithm ${rdata.algorithm}`);
     }
-    return crypto.subtle.importKey("jwk", jwk, algorithm, true, ["verify"]);
 }
 
 /**
@@ -261,6 +252,23 @@ export function labelCount(name: string[]): number {
     // or the null (root) label that terminates the owner name
     if (name[name.length - 1] === '') ownerNameLen--;
     return ownerNameLen;
+}
+
+/**
+ * Sort record names based on canonical DNS name order
+ * https://www.rfc-editor.org/rfc/rfc4034#section-6.1
+ * @param names List of names
+ * @return names, sorted and lowercased
+ */
+export function canonicalSortLabels(names: string[][]): string[][] {
+    names = names.map(name=>name.map(label=>label.toLowerCase()));
+    return names.sort((a, b)=>{
+        for (let i = 0; i < Math.min(a.length, b.length); ++i) {
+            if (a.at(-i) < b.at(-i)) return -1;
+            if (a.at(-i) > b.at(-i)) return 1;
+        }
+        return a.length - b.length;
+    })
 }
 
 /**
@@ -334,7 +342,7 @@ export function signedData(rrsigRDATA: RDATA[RecordType.RRSIG], rrset: ResponseR
                     // if rrsig_labels = fqdn_labels, name = fqdn
                     // if rrsig_labels < fqdn_labels, name = "*." | the rightmost rrsig_label labels of the fqdn
                     // if rrsig_labels > fqdn_labels the RRSIG RR did not pass the necessary validation checks and MUST NOT be used to authenticate this RRset.
-                    if (rrsigRDATA.labels < val.length-1) val = ["*", ...val.slice(-(rrsigRDATA.labels+1))];
+                    if (rrsigRDATA.labels < val.length - 1) val = ["*", ...val.slice(-(rrsigRDATA.labels + 1))];
                     val = (val as string[]).map(v => v.toLowerCase());
                     break;
                 case "TTL":
@@ -358,18 +366,18 @@ export function signedData(rrsigRDATA: RDATA[RecordType.RRSIG], rrset: ResponseR
 }
 
 /**
- * Validate DNS Response using included RRSIG records
- * @param response DNS Response returned by Resolver
+ * Validate array of records against included RRSIGs
+ * @param records Array of ResponseRecords including accompanying RRSIG
  * @param resolver Resolver instance used to make subsequent DNS requests needed to verify response
  */
-export default async function validate(response: Response, resolver: BaseResolver) {
-    const rrsigs = response.answer.filter(r => r.TYPE === RecordType.RRSIG) as ResponseRecord<RecordType.RRSIG>[];
-    if (rrsigs.length === 0) throw new Error('Unable to validate DNSKEY, missing matching RRSIG');
+async function validateRecords(records: ResponseRecord<any>[], resolver: BaseResolver) {
+    const rrsigs = records.filter(r => r.TYPE === RecordType.RRSIG) as ResponseRecord<RecordType.RRSIG>[];
+    if (rrsigs.length === 0) throw new Error('Unable to validate records, no RRSIG records present');
 
     const now = Math.floor(Date.now() / 1000);
 
     // Split up rrset on NAME, CLASS, TYPE
-    const rrsets = Array.from(response.answer.filter(r => r.TYPE !== RecordType.RRSIG).reduce((acc, rr) => {
+    const rrsets = Array.from(records.filter(r => r.TYPE !== RecordType.RRSIG).reduce((acc, rr) => {
         const key = `${rr.NAME}_${rr.CLASS}_${rr.TYPE}`;
         const bin = acc.get(key) || [];
         bin.push(rr);
@@ -394,30 +402,74 @@ export default async function validate(response: Response, resolver: BaseResolve
         // The RRSIG RR's Signer's Name, Algorithm, and Key Tag fields MUST match the owner name, algorithm, and key tag for some DNSKEY RR in the zone's apex DNSKEY RRset.
         // The matching DNSKEY RR MUST be present in the zone's apex DNSKEY RRset, and MUST have the Zone Flag bit (DNSKEY RDATA Flag bit 7) set.
         for (const rrsig of rrsigMatches) {
-            // TODO NSEC and SOA
-            switch (rr.TYPE) { // TODO check rrset CLASS is valid here
-                case RecordType.DNSKEY:
-                    const ksk = rrset.find(r => r.RDATA.key_tag === rrsig.RDATA.key_tag && r.RDATA.zone_key);
-                    if (ksk === undefined) throw new Error('Unable to validate DNSKEY, missing matching KSK');
-                    if (!rr.NAME.join('.').endsWith(rrsig.RDATA.signer.join('.'))) throw new Error('Unable to validate DNSKEY, RRSIG signer mismatch'); // TODO endsWith or equals?
-                    if (!await validateKSK(ksk, resolver)) throw new Error('Unable to validate DNSKEY, invalid KSK');
-                    // Verify rrset with KSK
-                    const key = await importDNSKEY(ksk.RDATA);
-                    if (await verifyRRSIG([key], rrsig.RDATA, rrset)) continue match;
-                    break;
-                case RecordType.DS:
-                // The DS record contains a digest of your DNSSEC Key Signing Key (KSK), and acts as a pointer to the next key in the chain of trust.
-                // tslint:disable-next-line
-                // debugger;
-                // break;
-                default:
-                    // The RRSIG RR's Signer's Name, Algorithm, and Key Tag fields MUST match the owner name, algorithm, and key tag for some DNSKEY RR in the zone's apex DNSKEY RRset.
-                    const zsk = await getKeys(rrsig.RDATA.signer, resolver, rrsig.RDATA.key_tag);
-                    if (!zsk || zsk.length === 0) throw new Error('Unable to validate RRSIG, no valid ZSK');
-                    if (await verifyRRSIG(zsk, rrsig.RDATA, rrset)) continue match;
+            let keys: CryptoKey[];
+            if (rr.TYPE === RecordType.DNSKEY) {
+                // Handle KSK
+                const ksk = rrset.find(r => r.RDATA.key_tag === rrsig.RDATA.key_tag && r.RDATA.zone_key);
+                if (ksk === undefined) throw new Error('Unable to validate DNSKEY, missing matching KSK');
+                if (!rr.NAME.join('.').endsWith(rrsig.RDATA.signer.join('.'))) throw new Error('Unable to validate DNSKEY, RRSIG signer mismatch'); // TODO endsWith or equals?
+                if (!await validateKSK(ksk, resolver)) throw new Error('Unable to validate DNSKEY, invalid KSK');
+                // Verify rrset with KSK
+                keys = [await importDNSKEY(ksk.RDATA)];
+            } else {
+                // The RRSIG RR's Signer's Name, Algorithm, and Key Tag fields MUST match the owner name, algorithm, and key tag for some DNSKEY RR in the zone's apex DNSKEY RRset.
+                keys = await getKeys(rrsig.RDATA.signer, resolver, rrsig.RDATA.key_tag);
             }
+            if (!keys || keys.length === 0) throw new Error('Unable to validate RRSIG, no valid signing key');
+            if (await verifyRRSIG(keys, rrsig.RDATA, rrset)) continue match;
         }
         return false;
     }
     return true;
+}
+
+/**
+ * Validate DNS Response using included RRSIG records
+ * The Question section of the response must be validated before calling this function
+ * @param response DNS Response returned by Resolver
+ * @param resolver Resolver instance used to make subsequent DNS requests needed to verify response
+ */
+export default async function validate(response: DNSResponse, resolver: BaseResolver) {
+    if (!await validateRecords(response.answer, resolver)) return false;
+    if (!await validateRecords(response.authority, resolver)) return false;
+    if (!await validateRecords(response.additional, resolver)) return false;
+
+    // After validating all rrsets, check that all Questions have non-empty responses or NSEC records
+    // https://www.rfc-editor.org/rfc/rfc4035#section-5.4
+    const questions = new Map<string, Question>(response.question.map(q=>[q.QNAME.join(".").toLowerCase(), q]));
+    const rrsets = new Set(response.answer.map(rr=>`${rr.NAME.join(".").toLowerCase()}_${rr.CLASS}_${rr.TYPE}`));
+    const nsecMap = new Map<string, AuthorityRecord<RecordType.NSEC>>(response.authority.filter(rr => rr.TYPE === RecordType.NSEC).map((rr: AuthorityRecord<RecordType.NSEC>)=>[rr.NAME.join(".").toLowerCase(), rr]));
+    const nsec3Map = new Map<string, AuthorityRecord<RecordType.NSEC3>>(response.authority.filter(rr => rr.TYPE === RecordType.NSEC3).map((rr: AuthorityRecord<RecordType.NSEC3>)=>[rr.NAME.join(".").toLowerCase(), rr]));
+    const nsecSigs = new Map<string, AuthorityRecord<RecordType.RRSIG>>(response.authority.filter(rr => rr.TYPE === RecordType.RRSIG && (rr as ResponseRecord<RecordType.RRSIG>).RDATA.type_covered === RecordType.NSEC).map((rr: AuthorityRecord<RecordType.RRSIG>)=>[rr.NAME.join(".").toLowerCase(), rr]));
+
+    for (const [name, q] of questions.entries()) {
+        const sig = nsecSigs.get(name);
+        const nsec = nsecMap.get(name) || nsec3Map.get(name);
+        if (rrsets.has(`${name}_${q.QCLASS}_${q.QTYPE}`) && (!nsec || nsec.RDATA.type_bit_map.has(q.QTYPE))) continue;
+        // Denial of existence is determined by the following rules:
+        // If the requested RR name matches the owner name of an authenticated NSEC RR, then the NSEC RR's type bit map field lists all RR types present at that owner name, and a
+        // resolver can prove that the requested RR type does not exist by checking for the RR type in the bit map.  If the number of labels in an authenticated NSEC RR's owner
+        // name equals the Labels field of the covering RRSIG RR, then the existence of the NSEC RR proves that wildcard expansion could not have been used to match the request.
+        if (name === nsecName && sig.RDATA.labels === q.QNAME.length) {
+            if (rrsets.has(`${name}_${q.QCLASS}_${q.QTYPE}`) !== nsec.RDATA.type_bit_map.has(q.QTYPE)) throw new Error("NSEC bitmap does not match answer");
+            continue;
+        }
+
+        // If the requested RR name would appear after an authenticated NSEC RR's owner name and before the name listed in that NSEC RR's Next Domain Name field according to the
+        // canonical DNS name order defined in [RFC4034], then no RRsets with the requested name exist in the zone.  However, it is possible that a wildcard could be used to match
+        // the requested RR owner name and type, so proving that the requested RRset does not exist also requires proving that no possible wildcard RRset exists that could have
+        // been used to generate a positive response.
+        if (nsec.NAME.join(".").toLowerCase() < name && name < nsec.RDATA.next_domain_name.join(".").toLowerCase()) {
+
+        }
+
+
+
+
+        if (nsec !== undefined) {
+            nsec.RDATA.next_domain_name;
+            nsec.RDATA.type_bit_map.has(q.QTYPE);
+        }
+    }
+    //TODO compare rrsets to question, if queried type is empty check for NSEC or NSEC3, else return false
 }

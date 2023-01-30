@@ -1,5 +1,7 @@
 import {RecordType} from "./constants.js";
+import * as constants from "./constants.js";
 import RDATA, {RDATA as RDATATypes} from "./rfc_rdata.js"
+import {DNSError} from "./dns";
 
 // tslint:disable:no-bitwise
 export interface Header {
@@ -309,6 +311,11 @@ export function* deserialize(data: ArrayBuffer, start: number = 0, end?: number)
                 val = undefined;
                 len = 15;
                 break;
+            case 'u2':
+                val = view.getUint16(byteOffset);
+                val = 0b11 & (val >> (13 - (bitOffset % 8)));
+                len = 2;
+                break;
             case 'u4':
                 val = view.getUint16(byteOffset);
                 val = 0b1111 & (val >> (11 - (bitOffset % 8)));
@@ -408,6 +415,7 @@ function setString(view: DataView, val: string) {
 export function* serialize(data: ArrayBuffer): Generator<number, undefined, [TokenType, TokenVal]> {
     const view = new DataView(data);
     let len = 0;
+    let bigval;
     for (let bitOffset = 0; bitOffset < view.byteLength * 8; bitOffset += len) {
         len = 0;
         let byteOffset = Math.trunc(bitOffset / 8);
@@ -445,9 +453,16 @@ export function* serialize(data: ArrayBuffer): Generator<number, undefined, [Tok
                 // Used by OPT Z field, no-op
                 len = 15;
                 break;
+            case 'u2':
+                if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
+                bigval = view.getUint16(byteOffset);
+                bigval |= val << (13 - (bitOffset % 8));
+                view.setUint16(byteOffset, bigval);
+                len = 2;
+                break;
             case 'u4':
                 if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
-                let bigval = view.getUint16(byteOffset);
+                bigval = view.getUint16(byteOffset);
                 bigval |= val << (11 - (bitOffset % 8));
                 view.setUint16(byteOffset, bigval);
                 len = 4;
@@ -541,7 +556,7 @@ export function buildRequest(questions: Question[], recursive: boolean = true, d
     return buf;
 }
 
-export interface Response {
+export interface DNSResponse {
     header: Header,
     question: Question[],
     answer: AnswerRecord<keyof RDATATypes>[],
@@ -554,10 +569,10 @@ export interface Response {
  * @param data DNS response data in wire format
  * @param keepRDATA include a 'raw_rdata' property in the ResponseRecords that holds a copy of the wire-formatted RDATA
  */
-export function parseResponse(data: ArrayBuffer, keepRDATA: boolean = false): Response {
+export function parseResponse(data: ArrayBuffer, keepRDATA: boolean = false): DNSResponse {
     const decoder = deserialize(data);
     decoder.next();
-    const response: Response = {header: {} as Header, question: [], answer: [], authority: [], additional: []};
+    const response: DNSResponse = {header: {} as Header, question: [], answer: [], authority: [], additional: []};
     // Header
     for (const [token, type] of Object.entries(header) as [keyof Header, TokenType][]) (response.header[token] as TokenVal) = decoder.next(type).value;
 
@@ -589,7 +604,7 @@ export function parseResponse(data: ArrayBuffer, keepRDATA: boolean = false): Re
             if (r.RDLENGTH > 0) {
                 const byteOffset = decoder.next().value as number || 0;
                 const end = byteOffset + r.RDLENGTH;
-                if (end > data.byteLength) throw Error(`RDLENGTH extends past end of received data`);
+                if (end > data.byteLength) throw new DNSError(`RDLENGTH extends past end of received data`, constants.BADRESP);
                 decoder.next(r.RDLENGTH); // Advance by RDLENGTH
                 const rdataDecoder = deserialize(data, byteOffset, end);
                 rdataDecoder.next();
@@ -601,6 +616,6 @@ export function parseResponse(data: ArrayBuffer, keepRDATA: boolean = false): Re
             (category as ResponseRecord<keyof RDATATypes>[]).push(r);
         }
     }
-    if (!decoder.next().done as boolean) throw Error(`Received data longer than expected`);
+    if (!decoder.next().done as boolean) throw new DNSError(`Received data longer than expected`, constants.BADRESP);
     return response;
 }
