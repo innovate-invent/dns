@@ -22,7 +22,9 @@ module.exports = (config) => {
 
     // list of files / patterns to exclude
     exclude: [
-        'spec/nodejs.spec.ts'
+        'spec/nodejs.spec.ts',
+        'spec/rfc7766.spec.ts',
+        'src/rfc7766.ts'
     ],
 
 

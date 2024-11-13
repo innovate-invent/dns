@@ -129,7 +129,7 @@ export function toNodeJSResponse(answer: AnswerRecord<any>[], rrtype: string, op
                         d = item.RDATA as RDATA[RecordType.CAA];
                         return {
                             type: 'CAA',
-                            critical: d.flags,
+                            critical: d.issuer_critical ? 128 : 0,
                             [d.tag]: d.value
                         } as AnyCAARecord;
                     case RecordType.SRV:
@@ -178,7 +178,7 @@ export function toNodeJSResponse(answer: AnswerRecord<any>[], rrtype: string, op
             return rrset.map(item => item.RDATA);
         case 'CAA':
             return rrset.filter(item => item.TYPE === RecordType.CAA).map((item: AnswerRecord<RecordType.CAA>) => ({
-                critical: item.RDATA.flags,
+                critical: item.RDATA.issuer_critical ? 128 : 0,
                 [item.RDATA.tag]: item.RDATA.value
             } as CAARecord));
     }

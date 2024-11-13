@@ -35,6 +35,7 @@
     "clean": "rm -rf dist",
     "test:compat": "ts-mocha -p tsconfig.node.json spec/nodejs.spec.ts",
     "test": "karma start --single-run --browsers ChromeHeadless karma.conf.cjs",
+    "test:node": "node --test --require ts-node/esm spec/rfc7766.spec.ts",
     "publish": "npm publish --access public"
   },
   "devDependencies": {

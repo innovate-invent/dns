@@ -15,9 +15,9 @@ export type BaseResolverOptions = { timeout?: number, tries?: number };
 // tslint:disable-next-line no-empty-interface
 export interface BaseResolver extends PromiseResolver {} // Allows partial implementation of PromiseResolver in abstract class using declaration merging
 export abstract class BaseResolver implements PromiseResolver {
-    private readonly _timeout: number = -1;
-    private readonly _tries: number = 4;
-    protected servers: string[];
+    protected readonly _timeout: number = -1;
+    protected readonly _tries: number = 4;
+    protected abstract servers: string[];
 
     constructor(options?: BaseResolverOptions) {
         if (!options) return;
@@ -32,53 +32,7 @@ export abstract class BaseResolver implements PromiseResolver {
         else this._tries = options.tries;
     }
 
-    _pending: Set<AbortController> = new Set();
-
-    cancel(): void {
-        for (const controller of this._pending) controller.abort();
-        this._pending.clear();
-    }
-
-    /**
-     * Fetch with abort, timeout, and retry
-     * @param resource URL of resource to fetch
-     * @param options RequestInit options to forward to fetch
-     * @protected
-     */
-    protected async _fetch(resource: string, options?: RequestInit): Promise<Response> {
-        const controller = new AbortController();
-        let id;
-        this._pending.add(controller);
-
-        try {
-            for (let _try = this._tries; _try > 0; --_try) {
-                let timeout = false;
-                if (this._timeout !== -1) id = setTimeout(() => {timeout = true; controller.abort();}, this._timeout);
-                try {
-                    return await fetch(resource, {
-                        ...options,
-                        signal: controller.signal
-                    });
-                } catch (e) {
-                    if (e.name === 'AbortError') {
-                        if (timeout) throw DNSError.TIMEOUT;
-                        throw DNSError.CANCELLED;
-                    }
-                    if (_try > 0) continue;
-                    // TODO translate e to DNSErrors
-                    switch (e.name) {
-                        case '':
-
-                    }
-                    throw e;
-                } finally {
-                    if (id) clearTimeout(id);
-                }
-            }
-        } finally {
-            this._pending.delete(controller);
-        }
-    }
+    abstract cancel(): void;
 
     setLocalAddress(ipv4: string, ipv6: string): void {
         // no-op
@@ -94,6 +48,7 @@ export abstract class BaseResolver implements PromiseResolver {
     }
 
     abstract resolve(hostname: string, rrtype?: (keyof typeof RecordType) | 'ANY', options?: ResolveOptions): Promise<any>;
+    abstract resolve(questions: {hostname: string, rrtype: (keyof typeof RecordType)}[], options?: ResolveOptions & {raw:true}): Promise<any[]>;
 
     resolve4(hostname: string, options: { ttl: true }): Promise<ARecord[]>;
     resolve4(hostname: string, options?: { ttl: false }): Promise<string[]>;

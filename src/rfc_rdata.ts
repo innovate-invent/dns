@@ -111,7 +111,7 @@ export type RDATA = {
     [RecordType.CDS]: { key_tag: number, algorithm: number, digest_type: number, digest: OPAQUE },
     [RecordType.SSHFP]: { algorithm: number, fp_type: number, fingerprint: OPAQUE },
     [RecordType.IPSECKEY]: { precedence: number, gateway_type: number, algorithm: number, gateway?: IP4ADDR | IP6ADDR | DOMAINNAME, public_key: OPAQUE },
-    [RecordType.NSEC3]: { hash_algorithm: number, opt_out: boolean, iterations: number, salt: string, next_hashed_owner_name: string, type_bit_map: Set<RecordType> },
+    [RecordType.NSEC3]: { hash_algorithm: number, opt_out: boolean, iterations: number, salt: ArrayBuffer, next_hashed_owner_name: ArrayBuffer, type_bit_map: Set<RecordType> },
     [RecordType.NSEC3PARAM]: { hash_algorithm: number, iterations: number, salt: string },
     [RecordType.TLSA]: { cert_usage: number, selector: number, matching_type: number, cert_assoc_data: OPAQUE },
     [RecordType.SMIMEA]: { cert_usage: number, selector: number, matching_type: number, cert_assoc_data: OPAQUE },
@@ -309,8 +309,8 @@ _rdata.set(RecordType.NSEC3, {
     reserved7: 'bit',
     opt_out: 'bit',
     iterations: 'u16',
-    salt: 'string',
-    next_hashed_owner_name: 'string',
+    salt: 'bytes',
+    next_hashed_owner_name: 'bytes',
     type_bit_map
 });
 _rdata.set(RecordType.NSEC3PARAM, {hash_algorithm: 'u8', flags: 'u8', iterations: 'u16', salt: 'string'});

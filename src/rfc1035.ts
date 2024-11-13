@@ -1,7 +1,22 @@
 import {RecordType} from "./constants.js";
 import * as constants from "./constants.js";
 import RDATA, {RDATA as RDATATypes} from "./rfc_rdata.js"
-import {DNSError} from "./dns";
+import {DNSError, ResolveOptions} from "./dns";
+import {BaseResolver} from "./base_resolver";
+import validate from "./rfc4034";
+import {toNodeJSResponse} from "./nodejs";
+import {base64url_encode} from "./base64url";
+
+const CACHE_NAME = '@i2labs.ca/dns';
+
+/**
+ * Calculate the byte length of a domain name in wire format.
+ * This will handle domain names with a trailing empty string.
+ * @param name String of strings containing domain name components
+ */
+export function domainNameLen(name: string[]): number {
+    return name.length + name.reduce((a,c)=>a+c.length, 0) + ( name[name.length-1].length === 0 ? 0 : 1 );
+}
 
 // tslint:disable:no-bitwise
 export interface Header {
@@ -329,6 +344,11 @@ export function* deserialize(data: ArrayBuffer, start: number = 0, end?: number)
             case 'opaque': // Consume remainder of data
                 yield data.slice(byteOffset + start, end);
                 return;
+            case 'bytes':
+                strlen = view.getUint8(byteOffset);
+                val = data.slice(byteOffset + start + 1, byteOffset + start + strlen + 1);
+                len += (strlen + 1) * 8;
+                break;
             case 'string[*]': // Consume remainder of data as string
                 yield String.fromCodePoint(...new Uint8Array(data.slice(byteOffset + start, end)));
                 return;
@@ -530,7 +550,7 @@ export function buildRequest(questions: Question[], recursive: boolean = true, d
     }
 
     totalLen += (questions.length * 4) // Bytes for QTYPE+QCLASS
-    + questions.reduce((acc, q)=>acc + q.QNAME.length + q.QNAME.reduce((a,c)=>a+c.length, 0) + ( q.QNAME[q.QNAME.length-1].length === 0 ? 0 : 1 ), 0); // Bytes required for QNAMEs
+    + questions.reduce((acc, q)=>acc + domainNameLen(q.QNAME), 0); // Bytes required for QNAMEs
 
     const buf = new ArrayBuffer(totalLen);
     const encoder = serialize(buf);
@@ -618,4 +638,73 @@ export function parseResponse(data: ArrayBuffer, keepRDATA: boolean = false): DN
     }
     if (!decoder.next().done as boolean) throw new DNSError(`Received data longer than expected`, constants.BADRESP);
     return response;
+}
+
+// tslint:disable-next-line:max-classes-per-file
+export abstract class WireFormatResolver extends BaseResolver {
+    abstract _submit(server: string, request: ArrayBuffer, keepRDATA: boolean): Promise<[DNSResponse, ArrayBuffer]>;
+    async resolve(hostname: string | {hostname: string, rrtype: (keyof typeof RecordType)}[], rrtype?: (keyof typeof RecordType) | "ANY" | ResolveOptions, options?: ResolveOptions): Promise<any | any[]> {
+        let questions: Question[];
+        if (!Array.isArray(hostname)) {
+            if (rrtype === "ANY") rrtype = "*";
+            else if (rrtype === undefined) rrtype = 'A';
+            questions = [new Question(hostname.split('.'), RecordType[rrtype as keyof typeof RecordType])];
+        } else {
+            questions = hostname.map(q=>new Question(q.hostname.split('.'), RecordType[q.rrtype as keyof typeof RecordType]));
+        }
+        const request = buildRequest(questions, undefined, options && options.dnssec);
+
+        let response: DNSResponse;
+        const errors: Error[] = [];
+
+        for (const server of this.getServers()) {
+            try {
+                // Check cached records
+                const payload = base64url_encode(request);
+                const url = `https://${server}/dns-query?dns=${payload}`;
+                const cache = await caches.open(CACHE_NAME);
+                let rawResponse = await cache.match(url);
+                if (rawResponse) {
+                    const expires = rawResponse.headers.get('Expires');
+                    if (!expires || new Date(expires) < new Date()) {
+                        cache.delete(url);
+                        rawResponse = null;
+                    }
+                }
+                let rawData: ArrayBuffer;
+                [response, rawData] = await this._submit(server, request, options && options.dnssec);
+                if (response.question && response.question.length === 1) { // verify question
+                    const q = response.question[0];
+                    if (Object.entries(question).some(([k, v]) => Array.isArray(v) ? v.some((e, i) => e !== (q[k as keyof Question] as any[])[i]) : q[k as keyof Question] !== v)) throw new Error('DNS query in response does not match original query');
+                } else throw new Error('Unable to validate DNS query from response');
+
+                // verify DNSSEC
+                if (options && options.dnssec && !await validate(response, this)) throw new Error(`DNSSEC validation for ${rrtype} from ${hostname} failed`);
+
+                // Cache response with expires set to the smallest record TTL
+                const minTTL = response.answer.reduce((acc, cur) => acc > cur.TTL ? cur.TTL : acc, 700000); // Max TTL is 604800
+                if (minTTL <= 604800) {
+                    rawResponse = new Response(rawData, {
+                        status: 200,
+                        headers: {
+                            Expires: new Date(Date.now() + (minTTL * 1000)).toUTCString(),
+                        },
+                    });
+                    cache.put(url, rawResponse);
+                }
+                break;
+            } catch (e) {
+                errors.push(e);
+            }
+        }
+        if (!response) {
+            if (errors.length === 1) throw errors[0];
+            else throw new AggregateError(errors);
+        }
+
+        if (options && options.raw) return response;
+
+        if (!response.answer || response.answer.length === 0) throw DNSError.NODATA;
+        return toNodeJSResponse(response.answer, rrtype as string, options);
+    }
 }

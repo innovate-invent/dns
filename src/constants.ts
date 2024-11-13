@@ -116,7 +116,7 @@ export enum RecordType {
 // https://en.wikipedia.org/wiki/Domain_Name_System_Security_Extensions#Algorithms
 export const ALGORITHMS: Record<number, AlgorithmIdentifier | RsaPssParams | EcdsaParams> = {
     5: { "name": "RSASSA-PKCS1-v1_5", hash: "SHA-1" } as AlgorithmIdentifier | RsaHashedImportParams, // https://datatracker.ietf.org/doc/html/rfc3110
-    // 7: { "name": "RSASHA1-NSEC3-SHA1" }, // TODO https://datatracker.ietf.org/doc/html/rfc5155
+    7: { "name": "RSASSA-PKCS1-v1_5", hash: "SHA-1" } as AlgorithmIdentifier | RsaHashedImportParams, // https://datatracker.ietf.org/doc/html/rfc5155
     8: { "name": "RSASSA-PKCS1-v1_5", hash: "SHA-256" } as AlgorithmIdentifier | RsaHashedImportParams, // https://datatracker.ietf.org/doc/html/rfc5702
     10: { "name": "RSASSA-PKCS1-v1_5", hash: "SHA-512" } as AlgorithmIdentifier | RsaHashedImportParams, // https://datatracker.ietf.org/doc/html/rfc5702
     13: { "name": "ECDSA", hash: "SHA-256", "namedCurve": "P-256" } as EcdsaParams | EcKeyImportParams, // https://datatracker.ietf.org/doc/html/rfc6605

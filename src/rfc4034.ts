@@ -1,11 +1,10 @@
-import {AuthorityRecord, record, DNSResponse, ResponseRecord, serialize, Question} from "./rfc1035.js";
+import {AuthorityRecord, record, DNSResponse, ResponseRecord, serialize, Question, domainNameLen} from "./rfc1035.js";
 import * as constants from "./constants.js";
 import {_rdata, RDATA} from "./rfc_rdata.js"
 import {BaseResolver} from "./base_resolver.js";
 import {ALGORITHMS, DIGESTS, RecordType} from "./constants.js";
 import {base64url_encode} from "./base64url.js";
 import {JsonWebKey} from "crypto";
-import CryptoKey = module;
 import {DNSError} from "./dns";
 
 // RRSIG - Contains a cryptographic signature signed by ZSK
@@ -29,6 +28,13 @@ type CachedCryptoKeys = Expires & {
 let ROOTDIGESTS: CachedDS = [];
 const SESSIONDSCACHE: Record<string, CachedDS> = {};
 const SESSIONKEYCACHE: Record<string, CachedCryptoKeys> = {};
+
+export class DNSSECValidationError extends Error {
+    constructor(reason?: string) {
+        reason = reason ? ": " + reason : "";
+        super("DNSSEC Validation failed" + reason);
+    }
+}
 
 /**
  * Get zone signing keys for owner zone
@@ -87,8 +93,7 @@ async function getRootDS(): Promise<typeof ROOTDIGESTS> {
 
     let response: Awaited<ReturnType<typeof fetch>>;
     try {
-        response = await fetch("https://iana.pages.dev/root-anchors.xml");
-        // TODO response = await fetch("https://data.iana.org/root-anchors/root-anchors.xml");
+        response = await fetch("https://data.iana.org/root-anchors/root-anchors.xml");
     } catch (e) {
         // tslint:disable-next-line:no-console
         console.log("Unable to fetch Root Zone Trust Anchors", e);
@@ -438,38 +443,75 @@ export default async function validate(response: DNSResponse, resolver: BaseReso
     // https://www.rfc-editor.org/rfc/rfc4035#section-5.4
     const questions = new Map<string, Question>(response.question.map(q=>[q.QNAME.join(".").toLowerCase(), q]));
     const rrsets = new Set(response.answer.map(rr=>`${rr.NAME.join(".").toLowerCase()}_${rr.CLASS}_${rr.TYPE}`));
-    const nsecMap = new Map<string, AuthorityRecord<RecordType.NSEC>>(response.authority.filter(rr => rr.TYPE === RecordType.NSEC).map((rr: AuthorityRecord<RecordType.NSEC>)=>[rr.NAME.join(".").toLowerCase(), rr]));
-    const nsec3Map = new Map<string, AuthorityRecord<RecordType.NSEC3>>(response.authority.filter(rr => rr.TYPE === RecordType.NSEC3).map((rr: AuthorityRecord<RecordType.NSEC3>)=>[rr.NAME.join(".").toLowerCase(), rr]));
-    const nsecSigs = new Map<string, AuthorityRecord<RecordType.RRSIG>>(response.authority.filter(rr => rr.TYPE === RecordType.RRSIG && (rr as ResponseRecord<RecordType.RRSIG>).RDATA.type_covered === RecordType.NSEC).map((rr: AuthorityRecord<RecordType.RRSIG>)=>[rr.NAME.join(".").toLowerCase(), rr]));
-
+    const nsecMap = new Map<string, AuthorityRecord<RecordType.NSEC>|AuthorityRecord<RecordType.NSEC3>>(response.authority.filter(rr => rr.TYPE === RecordType.NSEC || rr.TYPE === RecordType.NSEC3).map((rr: AuthorityRecord<RecordType.NSEC>)=>[rr.NAME.join(".").toLowerCase(), rr]));
+    const nsecSigs = new Map<string, AuthorityRecord<RecordType.RRSIG>>(response.authority.filter(rr => rr.TYPE === RecordType.RRSIG && (rr as ResponseRecord<RecordType.RRSIG>).RDATA.type_covered in [RecordType.NSEC, RecordType.NSEC3]).map((rr: AuthorityRecord<RecordType.RRSIG>)=>[rr.NAME.join(".").toLowerCase(), rr]));
+    const names = canonicalSortLabels([...Array.from(nsecMap.values()).map(n=>n.NAME), ...response.question.map(q=>q.QNAME)]).map(n=>n.join("."));
+    const nameDigests = new Map<string, ArrayBuffer>();
+    const soa = new Map<string, AuthorityRecord<RecordType.SOA>>(response.authority.filter(rr => rr.TYPE === RecordType.SOA).map((rr: AuthorityRecord<RecordType.SOA>)=>[rr.NAME.join(".").toLowerCase(), rr]));
+    return true;
     for (const [name, q] of questions.entries()) {
-        const sig = nsecSigs.get(name);
-        const nsec = nsecMap.get(name) || nsec3Map.get(name);
-        if (rrsets.has(`${name}_${q.QCLASS}_${q.QTYPE}`) && (!nsec || nsec.RDATA.type_bit_map.has(q.QTYPE))) continue;
+        const qIndex = names.lastIndexOf(name);
+        const nsecName = names.at(qIndex-1);
+        const nsec = nsecMap.get(nsecName);
+        const sig = nsecSigs.get(nsecName);
+
+        // Skip answered questions
+        if (rrsets.has(`${name}_${q.QCLASS}_${q.QTYPE}`)) {
+            // If the requested RR name matches the owner name of an authenticated NSEC RR, then the NSEC RR's type bit map field lists all RR types present at that owner name, and a
+            // resolver can prove that the requested RR type does not exist by checking for the RR type in the bit map.
+            if (!nsec || nsec.RDATA.type_bit_map.has(q.QTYPE)) continue;
+            throw new Error(`NSEC bitmap does not match answer for ${name} ${q.QCLASS} ${q.QTYPE}`);  // TODO log and return false?
+        }
+
+        // At this point the only remaining questions are ones without answers or wildcard records. They must have a matching NSEC without the requested type bit set.
+        // Wildcard expansion needs to be accounted for when checking of a NSEC record.
+
+        // example.com NSEC *.example.com
+        // *.example.com NSEC foo.example.com
+        // foo.example.com NSEC example.com
+
+        // TODO verify NS sig opt-out for NSEC3. This may only apply to upstream DNS Resolvers. https://www.rfc-editor.org/rfc/rfc5155#section-6
+
+
         // Denial of existence is determined by the following rules:
-        // If the requested RR name matches the owner name of an authenticated NSEC RR, then the NSEC RR's type bit map field lists all RR types present at that owner name, and a
-        // resolver can prove that the requested RR type does not exist by checking for the RR type in the bit map.  If the number of labels in an authenticated NSEC RR's owner
-        // name equals the Labels field of the covering RRSIG RR, then the existence of the NSEC RR proves that wildcard expansion could not have been used to match the request.
-        if (name === nsecName && sig.RDATA.labels === q.QNAME.length) {
-            if (rrsets.has(`${name}_${q.QCLASS}_${q.QTYPE}`) !== nsec.RDATA.type_bit_map.has(q.QTYPE)) throw new Error("NSEC bitmap does not match answer");
-            continue;
+        if (sig.RDATA.labels === q.QNAME.length) {
+            // If the number of labels in an authenticated NSEC RR's owner name equals the Labels field of the covering RRSIG RR, then the existence of the NSEC RR proves that
+            // wildcard expansion could not have been used to match the request.
+            if (!nsec.RDATA.type_bit_map.has(q.QTYPE)) continue;
+        } else {
+            // If the requested RR name would appear after an authenticated NSEC RR's owner name and before the name listed in that NSEC RR's Next Domain Name field according to the
+            // canonical DNS name order defined in [RFC4034], then no RRsets with the requested name exist in the zone.
+
+            // However, it is possible that a wildcard could be used to match the requested RR owner name and type, so proving that the requested RRset does not exist also requires
+            // proving that no possible wildcard RRset exists that could have been used to generate a positive response.
+            /*const originalName = ["*", ...q.QNAME.slice(-(sig.RDATA.labels + 1))].join(".");
+            if ("next_domain_name" in nsec.RDATA) {
+                const names = canonicalSortLabels([nsec.NAME, q.QNAME, nsec.RDATA.next_domain_name]).map(n=>n.join("."));
+
+            } else {
+                // NSEC3 hashed next_domain_name
+                const dotName = nsec.NAME.join('.');
+                let hashedName = nameDigests.get(dotName);
+                if (!hashedName) {
+                    const salt = new Uint8Array(nsec.RDATA.salt);
+                    const nameWireFmt = new ArrayBuffer(domainNameLen(nsec.NAME) + salt.byteLength);
+                    const encoder = serialize(nameWireFmt);
+                    encoder.next();
+                    encoder.next(['string[]', nsec.NAME]);
+                    new Uint8Array(nameWireFmt).set(salt, nameWireFmt.byteLength - salt.byteLength);
+                    hashedName = await crypto.subtle.digest(DIGESTS[nsec.RDATA.hash_algorithm], nameWireFmt);
+                    for (let i = 1; i < nsec.RDATA.iterations; ++i) {
+                        const concat = new Uint8Array(hashedName.byteLength + salt.byteLength);
+                        concat.set(new Uint8Array(hashedName));
+                        concat.set(salt, hashedName.byteLength);
+                        hashedName = await crypto.subtle.digest(DIGESTS[nsec.RDATA.hash_algorithm], concat);
+                    }
+                    nameDigests.set(dotName, hashedName);
+                }
+
+            }*/
+
         }
-
-        // If the requested RR name would appear after an authenticated NSEC RR's owner name and before the name listed in that NSEC RR's Next Domain Name field according to the
-        // canonical DNS name order defined in [RFC4034], then no RRsets with the requested name exist in the zone.  However, it is possible that a wildcard could be used to match
-        // the requested RR owner name and type, so proving that the requested RRset does not exist also requires proving that no possible wildcard RRset exists that could have
-        // been used to generate a positive response.
-        if (nsec.NAME.join(".").toLowerCase() < name && name < nsec.RDATA.next_domain_name.join(".").toLowerCase()) {
-
-        }
-
-
-
-
-        if (nsec !== undefined) {
-            nsec.RDATA.next_domain_name;
-            nsec.RDATA.type_bit_map.has(q.QTYPE);
-        }
+        return false;
     }
-    //TODO compare rrsets to question, if queried type is empty check for NSEC or NSEC3, else return false
 }
