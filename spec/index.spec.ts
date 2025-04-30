@@ -1,10 +1,20 @@
+/**
+ * Test suite for the NodeJS dns compat interface
+ */
+
+const originalFetch = window.fetch.bind(window);
+import {cmp, setFetch} from "./common.js";
+
 import dns from '../src/index.js'
 import {DNSError, SOARecord} from "../src/dns.js";
-import expected from "./expected.js";
-import {cmp} from "./common.js";
+import expected, {Expected} from "./expected.js";
+
 import {RecordType} from "../src/constants.js";
+import {base64url_decode} from "../src/base64url";
 
 const expect = chai.expect;
+
+let rawData;
 
 // tslint:disable:no-unused-expression
 
@@ -22,22 +32,32 @@ function testRRType(f: (host: string, cb: (err?: DNSError, addresses?: any[])=>v
                 done(e);
             }
         }
+        if (e.raw) rawData = base64url_decode(e.raw);
         f(e.host, cb);
     });
 }
 
 describe('dns', () => {
+    before('hook fetch', ()=>{
+        setFetch( async (input: RequestInfo | URL, init?: RequestInit)=>{
+            if (rawData) return new Response(rawData);
+            return originalFetch(input, init);
+        });
+    })
+    afterEach(()=>{
+        rawData = undefined;
+    })
     describe('lookup', () => {
         type Options = 4 | 6 | { family: 4 | 6 | 0, hints?: number, all?: boolean, verbatim?: boolean };
         [
-            {name: 'no options', hostname: expected.A.host, options: undefined, address: expected.A.records, family: 4},
-            {name: '4', hostname: expected.A.host, options: 4, address: expected.A.records, family: 4},
-            {name: '{family: 4}', hostname: expected.A.host, options: {family: 4}, address: expected.A.records, family: 4},
-            {name: '6', hostname: expected.AAAA.host, options: 6, address: expected.AAAA.records, family: 6},
-            {name: '{family: 6}', hostname: expected.AAAA.host, options: {family: 6}, address: expected.AAAA.records, family: 6},
+            {name: 'no options', hostname: expected.A.host, options: undefined, address: expected.A.records, family: 4, raw: expected.A.raw},
+            {name: '4', hostname: expected.A.host, options: 4, address: expected.A.records, family: 4, raw: expected.A.raw},
+            {name: '{family: 4}', hostname: expected.A.host, options: {family: 4}, address: expected.A.records, family: 4, raw: expected.A.raw},
+            {name: '6', hostname: expected.AAAA.host, options: 6, address: expected.AAAA.records, family: 6, raw: expected.AAAA.raw},
+            {name: '{family: 6}', hostname: expected.AAAA.host, options: {family: 6}, address: expected.AAAA.records, family: 6, raw: expected.AAAA.raw},
         ].forEach(test => {
             it(`should return ipv${test.family} of ${test.hostname} given ${test.name}`, done => {
-                function cb(err?: DNSError, address?: string, family?: number) {
+                function cb(err?: DNSError | AggregateError, address?: string, family?: number) {
                     try {
                         expect(err).to.be.undefined;
                         expect(address).to.oneOf(test.address);
@@ -47,6 +67,7 @@ describe('dns', () => {
                         done(e);
                     }
                 }
+                rawData = base64url_decode(test.raw);
                 if (test.options) dns.lookup(test.hostname, test.options as Options, cb);
                 else dns.lookup(test.hostname, cb);
             });
@@ -61,16 +82,16 @@ describe('dns', () => {
 
     describe('getServers', () => {
         it('should return default CloudFlare server', () => {
-            expect(dns.getServers()).to.eql(['cloudflare-dns.com']);
+            expect(dns.getServers()).to.eql(['cloudflare-dns.com', 'doh.opendns.com', 'unfiltered.adguard-dns.com', 'dns.google', 'dns.quad9.net']);
         })
     });
 
     describe('resolve', () => {
         [
-            {hostname: expected.A.host, rrval: undefined, result: expected.A.records},
-            {hostname: expected.A.host, rrval: 'ANY', result: [], pending: true},
-            ...Object.entries(expected).map(([rrval, v]: [string, {host: string, records: any[], cmp?: string[], pending?:boolean}])=>({hostname: v.host, rrval, result: v.records, cmp:v.cmp, pending:v.pending}))
-        ].forEach((test: { hostname: string, rrval: string, result: any[], cmp?: string[], pending?: boolean }) => {
+            {hostname: expected.A.host, rrval: undefined, result: expected.A.records, raw: expected.A.raw},
+            {hostname: expected.A.host, rrval: 'ANY', result: [], pending: true, raw: expected.A.raw},
+            ...Object.entries(expected).map(([rrval, v]: [string, Expected])=>({hostname: v.host, rrval, result: v.records, cmp:v.cmp, pending:v.pending, raw: v.raw}))
+        ].forEach((test: { hostname: string, rrval: string, result: any[], cmp?: string[], pending?: boolean, raw?: string}) => {
             it(`should resolve ${test.rrval || 'A'} records for ${test.hostname} given rrval: ${test.rrval}`, test.pending ? undefined : done => {
                 function cb(err?: DNSError, records?: any[] | SOARecord) {
                     try {
@@ -87,6 +108,7 @@ describe('dns', () => {
                 }
                 const optional: any[] = [];
                 if (test.rrval) optional.push(test.rrval);
+                rawData = base64url_decode(test.raw);
                 dns.resolve(test.hostname, ...optional, cb);
             });
         });
@@ -94,8 +116,8 @@ describe('dns', () => {
 
     describe('resolve4', () => {
         [
-            {hostname: expected.A.host, result: expected.A.records, options: undefined},
-            {hostname: expected.A.host, result: expected.A.records, options: {ttl: true}},
+            {hostname: expected.A.host, result: expected.A.records, options: undefined, raw: expected.A.raw},
+            {hostname: expected.A.host, result: expected.A.records, options: {ttl: true}, raw: expected.A.raw},
         ].forEach(test => {
             it(`should resolve A records for ${test.hostname} with ttl: ${test.options && test.options.ttl}`, done => {
                 function cb(err?: DNSError, addresses?: string[] | {address: string, ttl: boolean}[]) {
@@ -110,6 +132,7 @@ describe('dns', () => {
                         done(e);
                     }
                 }
+                rawData = base64url_decode(test.raw);
                 if (test.options) dns.resolve4(test.hostname, test.options, cb);
                 else dns.resolve4(test.hostname, cb);
             });
@@ -118,8 +141,8 @@ describe('dns', () => {
 
     describe('resolve6', () => {
         [
-            {hostname: expected.AAAA.host, result: expected.AAAA.records, options: undefined},
-            {hostname: expected.AAAA.host, result: expected.AAAA.records, options: {ttl: true}},
+            {hostname: expected.AAAA.host, result: expected.AAAA.records, options: undefined, raw: expected.A.raw},
+            {hostname: expected.AAAA.host, result: expected.AAAA.records, options: {ttl: true}, raw: expected.A.raw},
         ].forEach(test => {
             it(`should resolve AAAA records for ${test.hostname} with ttl: ${test.options && test.options.ttl}`, done => {
                 function cb(err?: DNSError, addresses?: string[] | {address: string, ttl: boolean}[]) {
@@ -136,6 +159,7 @@ describe('dns', () => {
                         done(e);
                     }
                 }
+                rawData = base64url_decode(test.raw);
                 if (test.options) dns.resolve6(test.hostname, test.options, cb);
                 else dns.resolve6(test.hostname, cb);
             });
@@ -144,7 +168,7 @@ describe('dns', () => {
 
     describe('resolveAny', () => {
         xit('should resolve ANY records', done => {
-            // Service doesnt support, can't actually test
+            // Service doesn't support, can't actually test
         });
     });
 

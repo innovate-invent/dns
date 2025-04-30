@@ -21,7 +21,10 @@
     "dns",
     "DoH",
     "RFC8484",
-    "RFC1035"
+    "RFC1035",
+    "RFC7766",
+    "RFC4034",
+    "DNSSEC"
   ],
   "files": [
     "dist/"
@@ -43,11 +46,13 @@
     "@rollup/plugin-node-resolve": "^13.3.0",
     "@rollup/plugin-typescript": "^9.0.2",
     "@types/chai": "^4.3.1",
+    "@types/chai-as-promised": "^8.0.2",
     "@types/mocha": "^9.1.1",
     "@types/node": "^18.6.1",
     "@types/estree": "^1.0.0",
     "@tsconfig/node18": "^1.0.1",
     "chai": "^4.3.6",
+    "chai-as-promised": "^8.0.1",
     "mocha": "^10.0.0",
     "rollup": "^2.77.0",
     "ts-loader": "^9.3.1",
@@ -62,6 +67,7 @@
     "karma-chrome-launcher": "^3.1.1",
     "karma-mocha": "^2.0.1",
     "karma-chai": "^0.1.0",
+    "karma-chai-as-promised": "^0.1.2",
     "karma-rollup-preprocessor": "^7.0.8",
     "karma-typescript": "^5.5.3",
     "karma-coverage": "^2.2.0"

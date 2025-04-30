@@ -11,9 +11,10 @@ import {expect} from "chai";
 type Test = {hostname: string, rrval?: (keyof typeof RecordType) | 'ANY', options?:ResolveOptions, result: any[] | DNSResponse, cmp?:string[], pending?:boolean};
 
 describe('RFC7766 Resolver', () => {
-    it('should cancel requests', (t, done) => {
+    it('should cancel requests', (t) => {
         const r = new Resolver();
-        r.resolve4(expected.A.host).then(()=>done(new Error("request completed"))).catch(()=>done());
+        // tslint:disable-next-line:no-unused-expression
+        expect(r.resolve4(expected.A.host)).to.eventually.be.rejected;
         r.cancel();
     });
 

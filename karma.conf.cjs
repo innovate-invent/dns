@@ -10,7 +10,7 @@ module.exports = (config) => {
 
     // frameworks to use
     // available frameworks: https://www.npmjs.com/search?q=keywords:karma-adapter
-    frameworks: ['mocha', 'chai', 'karma-typescript'],
+    frameworks: ['mocha', 'chai-as-promised', 'chai', 'karma-typescript'],
 
 
     // list of files / patterns to load in the browser

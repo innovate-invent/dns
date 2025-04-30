@@ -12,8 +12,12 @@ import {
 import {RecordType} from "./constants.js";
 
 export type BaseResolverOptions = { timeout?: number, tries?: number };
+
 // tslint:disable-next-line no-empty-interface
-export interface BaseResolver extends PromiseResolver {} // Allows partial implementation of PromiseResolver in abstract class using declaration merging
+export interface BaseResolver extends PromiseResolver {
+    // Allows partial implementation of PromiseResolver in abstract class using declaration merging
+}
+
 export abstract class BaseResolver implements PromiseResolver {
     protected readonly _timeout: number = -1;
     protected readonly _tries: number = 4;
@@ -22,14 +26,14 @@ export abstract class BaseResolver implements PromiseResolver {
     constructor(options?: BaseResolverOptions) {
         if (!options) return;
         if (options.timeout !== undefined)
-        if (!Number.isInteger(options.timeout)) throw new TypeError("timeout must be an integer");
-        else if (options.timeout < -1) throw new RangeError("timeout must be >= -1");
-        else this._timeout = options.timeout;
+            if (!Number.isInteger(options.timeout)) throw new TypeError("timeout must be an integer");
+            else if (options.timeout < -1) throw new RangeError("timeout must be >= -1");
+            else this._timeout = options.timeout;
 
         if (options.tries !== undefined)
-        if (!Number.isInteger(options.tries)) throw new TypeError("tries must be an integer");
-        else if (options.tries < 1) throw new RangeError("tries must be >= 1");
-        else this._tries = options.tries;
+            if (!Number.isInteger(options.tries)) throw new TypeError("tries must be an integer");
+            else if (options.tries < 1) throw new RangeError("tries must be >= 1");
+            else this._tries = options.tries;
     }
 
     abstract cancel(): void;
@@ -48,7 +52,9 @@ export abstract class BaseResolver implements PromiseResolver {
     }
 
     abstract resolve(hostname: string, rrtype?: (keyof typeof RecordType) | 'ANY', options?: ResolveOptions): Promise<any>;
-    abstract resolve(questions: {hostname: string, rrtype: (keyof typeof RecordType)}[], options?: ResolveOptions & {raw:true}): Promise<any[]>;
+    abstract resolve(questions: { hostname: string, rrtype: (keyof typeof RecordType) }[], options?: ResolveOptions & {
+        raw: true
+    }): Promise<any[]>;
 
     resolve4(hostname: string, options: { ttl: true }): Promise<ARecord[]>;
     resolve4(hostname: string, options?: { ttl: false }): Promise<string[]>;

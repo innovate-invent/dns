@@ -6,8 +6,8 @@ Supports most DNS over HTTPS servers.
 Why would you want to make DNS requests from a browser? DNS has numerous functions other than mapping domain names to IP
 addresses. SRV and TXT records offer the ability to do service discovery and distribute information such as public keys.
 
-**This library uses AbortController, which is not compatible with Internet Explorer.** A polyfill may be available,
-but is not included.
+**This library uses AbortController, which is not compatible with Internet Explorer.** A polyfill may be available, but
+is not included.
 
 See the [NodeJS dns documentation](https://nodejs.org/api/dns.html) for information on how to use this library.
 The [caveats](https://nodejs.org/api/dns.html#dns_implementation_considerations) mentioned in the documentation
@@ -20,18 +20,16 @@ hostnames of the 'DNS over HTTPS' providers that the resolver makes requests aga
 
 `Resolver.resolve()` is extended to support most record types. If you want to bypass the modifications made to the
 response values by the NodeJS dns specification, you can pass `{raw: true}` in the `options` object argument to get the
-full response object.
-Pass `{dnssec: true}` in the `options` object argument to enable client side DNSSEC validation for the request.
-A best attempt to parse record data as much as possible was made. Due to an inconsistent mix of available documentation
-for the record type data layouts, not all are complete.
+full response object. Pass `{dnssec: true}` in the `options` object argument to enable client side DNSSEC validation for
+the request. A best attempt to parse record data as much as possible was made. Due to an inconsistent mix of available
+documentation for the record type data layouts, not all are complete.
 See [rfc_rdata.ts](https://github.com/innovate-invent/dns/blob/main/src/rfc_rdata.ts) for the RDATA layout descriptions.
 Any type that is marked as 'opaque' may change in the future with contributions to extend the parsing of that record
 type.
 
 This library is able to function by using any 'DNS over HTTPS' services. The default resolver hosts are
-`['cloudflare-dns.com', 'doh.opendns.com', 'unfiltered.adguard-dns.com', 'dns.google', 'dns.quad9.net']`.
-They will be queried in order until a successful response.
-Support for any of the providers listed under 'DNS over HTTPS'
+`['cloudflare-dns.com', 'doh.opendns.com', 'unfiltered.adguard-dns.com', 'dns.google', 'dns.quad9.net']`. They will be
+queried in order until a successful response. Support for any of the providers listed under 'DNS over HTTPS'
 at https://en.wikipedia.org/wiki/Public_recursive_name_server
 can be added. Currently, only providers (most of them) that implement [RFC8484](https://tools.ietf.org/html/rfc8484) are
 supported. Contributions are welcome.
@@ -54,11 +52,17 @@ addition to the methods defined in the [NodeJS dns documentation](https://nodejs
 
 It is highly recommended to enable client side DNSSEC validation for requests; Otherwise you are trusting the DoH
 provider to validate or not tamper with the DNS records. The complete certificate chain is validated up to
-the [IANA Root Trust Anchors](https://www.iana.org/dnssec).
-The root trust anchors are fetched separately via HTTPS directly from 
-https://data.iana.org/root-anchors/root-anchors.xml.
-The authenticity of the returned data depends on the browsers ability to validate the HTTPS SSL certificate for
-data.iana.org.
+the [IANA Root Trust Anchors](https://www.iana.org/dnssec). The root trust anchors are fetched separately via HTTPS
+directly from
+https://data.iana.org/root-anchors/root-anchors.xml. The authenticity of the returned data depends on the browsers
+ability to validate the HTTPS SSL certificate for data.iana.org.
+
+**This library (and any library that is loaded into the same browser context) is susceptible to XSS or untrusted scripts
+tampering with the browser provided functions such as Window.fetch.** This means that malicious code can interfere
+with the DNSSEC validation. If you don't trust all the scripts loaded into the browser context then move all sensitive
+operations to a [Web Worker](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API) that has its own context.
+Note that a malicious script can also swap out the Web Worker interface meaning you can't trust the data returned from
+the Web Worker.
 
 ## Use
 

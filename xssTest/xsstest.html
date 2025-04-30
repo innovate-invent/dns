@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>XSS Test</title>
+  <script>
+    const noModuleAttackSentinel = {};
+    window.fetch = noModuleAttackSentinel;
+    document.createElement = noModuleAttackSentinel;
+  </script>
+  <script type="module">
+    const preattackSentinel = {};
+    const postattackSentinel = {};
+    window.fetch = preattackSentinel;
+    import {testCreateElement, testHandle, testWindow, testGlobalFetch} from './xsstest.js';
+    if (testWindow(noModuleAttackSentinel)) console.log("window.fetch pwnd by noModuleAttack!");
+    if (testHandle(noModuleAttackSentinel)) console.log("handle to fetch pwnd by noModuleAttack!");
+    if (testGlobalFetch(noModuleAttackSentinel)) console.log("global handle to fetch pwnd by noModuleAttack!");
+    if (testCreateElement(noModuleAttackSentinel)) console.log("document.createElement pwnd by noModuleAttack!");
+    if (testWindow(preattackSentinel)) console.log("window.fetch pwnd by preattack!");
+    if (testHandle(preattackSentinel)) console.log("handle to fetch pwnd by preattack!");
+    if (testGlobalFetch(preattackSentinel)) console.log("global handle to fetch pwnd by preattack!");
+    window.fetch = postattackSentinel;
+    if (testWindow(postattackSentinel)) console.log("window.fetch pwnd by postattack!");
+    if (testHandle(postattackSentinel)) console.log("handle to fetch pwnd by postattack!");
+    if (testGlobalFetch(postattackSentinel)) console.log("global handle to fetch pwnd by postattack!");
+  </script>
+</head>
+<body>
+<p>This is a test to ensure that window.fetch can not be overridden within a module by an external script (it can).</p>
+</body>
+</html>

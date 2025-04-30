@@ -152,6 +152,12 @@ export class Question {
         this.QTYPE = QTYPE;
         this.QCLASS = QCLASS;
     }
+    static equals(q1: Question, q2: Question) {
+        return q1.QNAME.length === q2.QNAME.length &&
+            q1.QNAME.every((v, i)=>v === q2.QNAME[i]) &&
+            q1.QTYPE === q2.QTYPE &&
+            q1.QCLASS === q2.QCLASS;
+    }
 }
 
 export const question = {
@@ -642,8 +648,14 @@ export function parseResponse(data: ArrayBuffer, keepRDATA: boolean = false): DN
 
 // tslint:disable-next-line:max-classes-per-file
 export abstract class WireFormatResolver extends BaseResolver {
-    abstract _submit(server: string, request: ArrayBuffer, keepRDATA: boolean): Promise<[DNSResponse, ArrayBuffer]>;
-    async resolve(hostname: string | {hostname: string, rrtype: (keyof typeof RecordType)}[], rrtype?: (keyof typeof RecordType) | "ANY" | ResolveOptions, options?: ResolveOptions): Promise<any | any[]> {
+    private _pending: Set<AbortController> = new Set();
+    abstract _submit(server: string, request: ArrayBuffer, keepRDATA: boolean, abortSignal: AbortSignal): Promise<[DNSResponse, ArrayBuffer]>;
+
+    protected _url(server: string,  payload: string) {
+        return `https://${server}/dns-query?dns=${payload}`;
+    }
+
+    resolve(hostname: string | {hostname: string, rrtype: (keyof typeof RecordType)}[], rrtype?: (keyof typeof RecordType) | "ANY" | ResolveOptions, options?: ResolveOptions): Promise<any | any[]> {
         let questions: Question[];
         if (!Array.isArray(hostname)) {
             if (rrtype === "ANY") rrtype = "*";
@@ -657,54 +669,100 @@ export abstract class WireFormatResolver extends BaseResolver {
         let response: DNSResponse;
         const errors: Error[] = [];
 
-        for (const server of this.getServers()) {
-            try {
-                // Check cached records
-                const payload = base64url_encode(request);
-                const url = `https://${server}/dns-query?dns=${payload}`;
-                const cache = await caches.open(CACHE_NAME);
-                let rawResponse = await cache.match(url);
-                if (rawResponse) {
-                    const expires = rawResponse.headers.get('Expires');
-                    if (!expires || new Date(expires) < new Date()) {
-                        cache.delete(url);
-                        rawResponse = null;
+        // This must be done synchronously with the call to resolve() or cancel() will race if called soon after
+        const controller = new AbortController();
+        this._pending.add(controller);
+
+        return (async ()=>{
+            // Retry request with timeout
+            let id;
+            success: for (let _try = this._tries; _try > 0; --_try) {
+                let timeout = false;
+                if (id) clearTimeout(id);
+                if (this._timeout !== -1) id = setTimeout(() => {
+                    timeout = true;
+                    controller.abort();
+                }, this._timeout);
+                for (const server of this.getServers()) {
+                    // Check cached records
+                    const payload = base64url_encode(request);
+                    const url = this._url(server, payload);
+                    const cache = await caches.open(CACHE_NAME);
+                    let rawResponse = await cache.match(url);
+                    if (rawResponse) {
+                        const expires = rawResponse.headers.get('Expires');
+                        if (!expires || new Date(expires) < new Date()) {
+                            cache.delete(url);
+                            rawResponse = null;
+                        }
+                    }
+
+                    try {
+                        let rawData: ArrayBuffer;
+                        [response, rawData] = await this._submit(server, request, options && options.dnssec, controller.signal);
+                        // tslint:disable-next-line:no-console
+                        console.log(`"${rrtype}": "${base64url_encode(rawData)}"`);
+                        if (response.question) { // verify questions
+                            if (response.question.length !== questions.length) throw new Error('DNS query in response does not match original query');
+                            verifyQ: for (const reqQ of questions) {
+                                // Yes, this is O(n^2) but n is so small I am not sure if the time to copy response.question
+                                // array is worth it given it is likely that the questions be returned in the same
+                                // order as requested
+                                for (const respQ of response.question)
+                                    if (Question.equals(reqQ, respQ)) continue verifyQ;
+                                throw new Error('DNS query in response does not match original query');
+                            }
+                        } else throw new Error('Unable to validate DNS query from response');
+
+                        // verify DNSSEC
+                        if (options && options.dnssec && !await validate(response, this)) throw new Error(`DNSSEC validation for ${rrtype} from ${hostname} failed`);
+
+                        // Cache response with expires set to the smallest record TTL
+                        const minTTL = response.answer.reduce((acc, cur) => acc > cur.TTL ? cur.TTL : acc, 700000); // Max TTL is 604800
+                        if (minTTL <= 604800) {
+                            rawResponse = new Response(rawData, {
+                                status: 200,
+                                headers: {
+                                    Expires: new Date(Date.now() + (minTTL * 1000)).toUTCString(),
+                                },
+                            });
+                            cache.put(url, rawResponse);
+                        }
+
+                        break success;
+                    } catch (e) {
+                        // tslint:disable-next-line:no-console
+                        console.error(e);
+                        if (e.name === 'AbortError') {
+                            if (timeout) e = DNSError.TIMEOUT;
+                            else e = DNSError.CANCELLED;
+                        }
+                        // TODO translate e to DNSErrors
+                        switch (e.name) {
+                            case '':
+
+                        }
+                        errors.push(e);
+                        if (_try > 0) continue;
                     }
                 }
-                let rawData: ArrayBuffer;
-                [response, rawData] = await this._submit(server, request, options && options.dnssec);
-                if (response.question && response.question.length === 1) { // verify question
-                    const q = response.question[0];
-                    if (Object.entries(question).some(([k, v]) => Array.isArray(v) ? v.some((e, i) => e !== (q[k as keyof Question] as any[])[i]) : q[k as keyof Question] !== v)) throw new Error('DNS query in response does not match original query');
-                } else throw new Error('Unable to validate DNS query from response');
-
-                // verify DNSSEC
-                if (options && options.dnssec && !await validate(response, this)) throw new Error(`DNSSEC validation for ${rrtype} from ${hostname} failed`);
-
-                // Cache response with expires set to the smallest record TTL
-                const minTTL = response.answer.reduce((acc, cur) => acc > cur.TTL ? cur.TTL : acc, 700000); // Max TTL is 604800
-                if (minTTL <= 604800) {
-                    rawResponse = new Response(rawData, {
-                        status: 200,
-                        headers: {
-                            Expires: new Date(Date.now() + (minTTL * 1000)).toUTCString(),
-                        },
-                    });
-                    cache.put(url, rawResponse);
-                }
-                break;
-            } catch (e) {
-                errors.push(e);
             }
-        }
-        if (!response) {
-            if (errors.length === 1) throw errors[0];
-            else throw new AggregateError(errors);
-        }
+            if (id) clearTimeout(id);
+            this._pending.delete(controller);
+            if (!response) {
+                if (errors.length === 1) throw errors[0];
+                else throw new AggregateError(errors);
+            }
 
-        if (options && options.raw) return response;
+            if (options && options.raw) return response;
 
-        if (!response.answer || response.answer.length === 0) throw DNSError.NODATA;
-        return toNodeJSResponse(response.answer, rrtype as string, options);
+            if (!response.answer || response.answer.length === 0) throw DNSError.NODATA;
+            return toNodeJSResponse(response.answer, rrtype as string, options);
+        })();
+    }
+
+    public cancel(): void {
+        for (const controller of this._pending) controller.abort();
+        this._pending.clear();
     }
 }

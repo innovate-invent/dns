@@ -1,3 +1,18 @@
+// Attempt to grab a handle on the original browser supplied function to help mitigate XSS hijacking and injecting
+// fake DNSSEC data. This can be easily countered by having the XSS attack occur earlier than this script is loaded.
+const _fetch = fetch;
+const _digest = crypto.subtle.digest.bind(crypto.subtle);
+const _verify = crypto.subtle.verify.bind(crypto.subtle);
+const _importKey = crypto.subtle.importKey.bind(crypto.subtle);
+const _now = Date.now;
+const _parseInt = parseInt;
+// TODO are the following still hackable via Class.prototype?
+const _fromUint8Array = Uint8Array.from.bind(Uint8Array);
+const _Uint8Array = Uint8Array;
+const _ArrayBuffer = ArrayBuffer;
+const _DOMParser = DOMParser;
+const parseXMLFromString = DOMParser.prototype.parseFromString;
+
 import {AuthorityRecord, record, DNSResponse, ResponseRecord, serialize, Question, domainNameLen} from "./rfc1035.js";
 import * as constants from "./constants.js";
 import {_rdata, RDATA} from "./rfc_rdata.js"
@@ -42,8 +57,9 @@ export class DNSSECValidationError extends Error {
  * @param resolver An instance of a resolver used to make requests for the DNSKEY records
  * @param keyTag key tag of original DNSKEY to filter on
  */
+// This function must not be exported as it returns a reference to the CryptoKeys and not a copy
 async function getKeys(owner: string[], resolver: BaseResolver, keyTag?: number): Promise<CryptoKey[]> {
-    const now = Date.now();
+    const now = _now();
     const label = owner.join('.');
 
     // Check session cache
@@ -54,7 +70,7 @@ async function getKeys(owner: string[], resolver: BaseResolver, keyTag?: number)
             delete SESSIONKEYCACHE[label];
             return [];
         }
-        if (keyTag !== undefined) return keys.keys.filter((k, i) => keys.keyTags[i] === keyTag);
+        if (keyTag !== undefined) return keys.keys.filter((_, i) => keys.keyTags[i] === keyTag);
         return keys.keys;
     }
 
@@ -86,54 +102,76 @@ async function getKeys(owner: string[], resolver: BaseResolver, keyTag?: number)
  * Helper to retrieve IANA root anchor digests for validating DS chain.
  * This depends on the browsers HTTPS certificate validation to guarantee authenticity of root records.
  */
+// This function must not be exported as it returns a reference to the root digest cache and not a copy
 async function getRootDS(): Promise<typeof ROOTDIGESTS> {
-    const now = Date.now();
+    const now = _now();
     ROOTDIGESTS = ROOTDIGESTS.filter(d => d.expires > now);
     if (ROOTDIGESTS.length > 0) return ROOTDIGESTS;
 
     let response: Awaited<ReturnType<typeof fetch>>;
     try {
-        response = await fetch("https://data.iana.org/root-anchors/root-anchors.xml");
+        response = await _fetch("https://data.iana.org/root-anchors/root-anchors.xml");
     } catch (e) {
         // tslint:disable-next-line:no-console
-        console.log("Unable to fetch Root Zone Trust Anchors", e);
+        console.error("Unable to fetch Root Zone Trust Anchors", e);
         throw e;
     }
-    const anchor: XMLDocument = await response.text().then((t: string) => new DOMParser().parseFromString(t, 'text/xml'));
+    const anchor: XMLDocument = await response.text().then((t: string) => parseXMLFromString.call(new _DOMParser(), t, 'text/xml'));
+    const errorNode = anchor.querySelector("parsererror");
+    if (errorNode) {
+        // tslint:disable-next-line:no-console
+        console.error(errorNode.outerHTML);
+        throw new Error('Unable to parse Root Zone Trust Anchors');
+    }
+    const zone = anchor.querySelector("Zone").textContent;
+    if (zone !== '.') {
+        throw new Error('Unexpected zone when retrieving the Root Zone Trust Anchors: ' + zone);
+    }
     ROOTDIGESTS = [];
     anchor.querySelectorAll('KeyDigest').forEach(keydigest => {
         // https://www.rfc-editor.org/rfc/rfc7958.html
         // const id = keydigest.getAttribute("id");
         const validFrom = Date.parse(keydigest.getAttribute("validFrom"));
-        let validUntil = now + 259200000;  // 3 days
+        let validUntil = now + 259200000;  // arbitrary 3 days
         if (keydigest.hasAttribute("validUntil")) validUntil = Date.parse(keydigest.getAttribute("validUntil"));
         else if (response.headers.has('expires')) validUntil = Date.parse(response.headers.get('expires'));
+        else if (response.headers.has('cache-control')) {
+            // Given IANAs current http response, this is the code path that will be used. The others are just
+            // future proofing
+            const maxAgeMatch = response.headers.get('cache-control').match(/(?<=max-age=)\d+/);
+            if (maxAgeMatch) {
+                const maxAge = _parseInt(maxAgeMatch[0], 10);
+                if (!Number.isNaN(maxAge)) validUntil = now + (maxAge * 1000);
+            }
+        }
+        // TODO verify the optional public key against the digest?
         if (validFrom <= now && now < validUntil) ROOTDIGESTS.push({
             expires: validUntil,
-            key_tag: parseInt(keydigest.querySelector("KeyTag").textContent, 10),
-            algorithm: parseInt(keydigest.querySelector("Algorithm").textContent, 10),
-            digest_type: parseInt(keydigest.querySelector("DigestType").textContent, 10),
-            digest: Uint8Array.from(keydigest.querySelector("Digest").textContent.match(/../g), c => parseInt(c, 16)).buffer,
+            key_tag: _parseInt(keydigest.querySelector("KeyTag").textContent, 10),
+            algorithm: _parseInt(keydigest.querySelector("Algorithm").textContent, 10),
+            digest_type: _parseInt(keydigest.querySelector("DigestType").textContent, 10),
+            digest: _fromUint8Array(keydigest.querySelector("Digest").textContent.match(/\w\w/g), (c: string) => _parseInt(c, 16)).buffer,
         });
     });
     return ROOTDIGESTS;
 }
 
 /**
- * Fetch DS record for ksk from cache or request from resolver
+ * Fetch DS record for ksk from session cache or request from resolver
  * @param owner KSK record to validate
  * @param resolver An instance of a resolver used to make requests for the DS records
  */
+// This function must not be exported as it returns a reference to the CachedDS rather than a copy
 async function getStoredDS(owner: string[], resolver: BaseResolver): Promise<CachedDS> {
-    if (owner.length === 1) return getRootDS();  // Root key
+    if (owner.length === 1 && owner[0].length === 0) return getRootDS();  // Root key
 
     // Check session cache
-    const now = Date.now();
+    const now = _now();
     const label = owner.join('.');
     if (label in SESSIONDSCACHE) {
         const ds = SESSIONDSCACHE[label].filter(d => d.expires > now);
         SESSIONDSCACHE[label] = ds;
-        return ds;
+        if (ds.length) return ds;
     }
 
     // Fetch DS from DNS
@@ -165,23 +203,25 @@ async function getStoredDS(owner: string[], resolver: BaseResolver): Promise<Cac
  */
 export async function validateKSK(ksk: ResponseRecord<RecordType.DNSKEY>, resolver: BaseResolver): Promise<boolean> {
     if (!ksk.RDATA.zone_key) return false;  // The DNSKEY RR referred to in the DS RR MUST be a DNSSEC zone key.
+    if (!ksk.raw_rdata || ksk.raw_rdata.byteLength === 0) throw Error('KSK raw_rdata field not populated');
+    if (ksk.RDATA.protocol !== 3) return false; // https://datatracker.ietf.org/doc/html/rfc4034#section-2.1.2
     const ds = await getStoredDS(ksk.NAME, resolver);
 
     // digest = digest_algorithm( DNSKEY owner name | DNSKEY RDATA);
     // DNSKEY RDATA = Flags | Protocol | Algorithm | Public Key.  "|" denotes concatenation
-    const data = new ArrayBuffer(ksk.raw_rdata.byteLength + ksk.NAME.length + ksk.NAME.reduce((acc, cur) => acc + cur.length, 0));
+    const data = new _ArrayBuffer(ksk.raw_rdata.byteLength + ksk.NAME.length + ksk.NAME.reduce((acc, cur) => acc + cur.length, 0));
     const encoder = serialize(data);
     encoder.next();
     encoder.next(['string[]', ksk.NAME.map(v => v.toLowerCase())]);
-    encoder.next(['opaque', new Uint8Array(ksk.raw_rdata)]);
+    encoder.next(['opaque', new _Uint8Array(ksk.raw_rdata)]);
 
-    const digests: Record<number, Uint32Array> = {};
+    const digests: Record<number, Uint8Array> = {};
     for (const d of ds) {  // Find matching DS
         if (d.key_tag === ksk.RDATA.key_tag &&
             d.algorithm === ksk.RDATA.algorithm) {
-            digests[d.digest_type] = digests[d.digest_type] || new Uint32Array(await crypto.subtle.digest(DIGESTS[d.digest_type], data));
+            digests[d.digest_type] = digests[d.digest_type] || new _Uint8Array(await _digest(DIGESTS[d.digest_type], data));
             const queryDigest = digests[d.digest_type];
-            const refDigest = new Uint32Array(d.digest);
+            const refDigest = new _Uint8Array(d.digest);
             if (refDigest.byteLength === queryDigest.byteLength &&
                 refDigest.every((v, i) => v === queryDigest[i])
             ) return true;
@@ -195,15 +235,21 @@ export async function validateKSK(ksk: ResponseRecord<RecordType.DNSKEY>, resolv
  * @param rdata DNSKEY record RDATA
  */
 export async function importDNSKEY(rdata: RDATA[RecordType.DNSKEY]): Promise<CryptoKey> {
+    if (!(rdata.algorithm in ALGORITHMS)) throw new Error(`Key algorithm ${rdata.algorithm} not implemented`);
     const algorithm = ALGORITHMS[rdata.algorithm];
-    let jwk: JsonWebKey;
     switch (rdata.algorithm) {
+        case 5:
+        case 7:
+            // tslint:disable-next-line:no-console
+            console.warn('DNSKEY record uses insecure SHA1 algorithm');
+        // fallthrough
         case 8:
+        case 10:
             // https://datatracker.ietf.org/doc/html/rfc3110#section-2
             const data = new DataView(rdata.public_key);
             let eLen = data.getUint8(0);
             let offset = 1;
-            if (eLen === 0) {
+            if (eLen === 0) { // Handle two byte exponent length
                 eLen = data.getUint16(offset);
                 offset += 2;
             }
@@ -212,6 +258,8 @@ export async function importDNSKEY(rdata: RDATA[RecordType.DNSKEY]): Promise<Cry
             // https://stackoverflow.com/a/19030716
             // https://www.rfc-editor.org/rfc/rfc3279
             let spki;
+            // Reconstruct key data in SPKI format for import
+            // https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/importKey#subjectpublickeyinfo
             // TODO why the extra 0 before the modulus?!
             if (n.byteLength > 128) {
                 spki = new Uint8Array([0x30, 0x82, 0xFF, 0xFF, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00, 0x03, 0x82, 0xFF, 0xFF, 0x00, 0x30, 0x82, 0xFF, 0xFF, 0x02, 0x82, 0xFF, 0xFF, 0, ...new Uint8Array(n), 0x02, e.byteLength, ...new Uint8Array(e)]).buffer;
@@ -228,20 +276,20 @@ export async function importDNSKEY(rdata: RDATA[RecordType.DNSKEY]): Promise<Cry
                 v.setUint8(24, v.byteLength - 25);
             }
 
-            return crypto.subtle.importKey("spki", spki, algorithm, true, ["verify"]);
+            return _importKey("spki", spki, algorithm, true, ["verify"]);
         case 13:
         case 14:
             // ECDSA public key is only supported via jwk: https://github.com/diafygi/webcrypto-examples/issues/30
-            jwk = {
-                kty: "EC",
+            const jwk: JsonWebKey = {
+                kty: "EC",  // https://datatracker.ietf.org/doc/html/rfc7518#section-6.1
                 crv: (algorithm as EcKeyImportParams).namedCurve,
                 x: base64url_encode(rdata.public_key.slice(0, rdata.public_key.byteLength / 2)),
                 y: base64url_encode(rdata.public_key.slice(rdata.public_key.byteLength / 2)),
                 ext: true,
             };
-            return crypto.subtle.importKey("jwk", jwk, algorithm, true, ["verify"]);
+            return _importKey("jwk", jwk, algorithm, true, ["verify"]);
         default:
-            throw new Error(`Unknown key algorithm ${rdata.algorithm}`);
+            throw new Error(`Key algorithm ${rdata.algorithm} not implemented`);
     }
 }
 
@@ -266,9 +314,15 @@ export function labelCount(name: string[]): number {
  * @return names, sorted and lowercased
  */
 export function canonicalSortLabels(names: string[][]): string[][] {
-    names = names.map(name=>name.map(label=>label.toLowerCase()));
-    return names.sort((a, b)=>{
-        for (let i = 0; i < Math.min(a.length, b.length); ++i) {
+    // For the purposes of DNS security, owner names are ordered by treating
+    // individual labels as unsigned left-justified octet strings.  The
+    // absence of a octet sorts before a zero value octet, and uppercase
+    // US-ASCII letters are treated as if they were lowercase US-ASCII
+    // letters.
+    names = names.map(name => name.map(label => label.toLowerCase()));
+    return names.sort((a, b) => {
+        for (let i = 1; i <= Math.min(a.length, b.length); ++i) {
+            // This uses JS string comparison and isn't comparing individual characters, ie '' < 'example'
             if (a.at(-i) < b.at(-i)) return -1;
             if (a.at(-i) > b.at(-i)) return 1;
         }
@@ -281,12 +335,13 @@ export function canonicalSortLabels(names: string[][]): string[][] {
  * @param keys Array of candidate keys, multiple can be attempted in the event that the signing key is ambiguous
  * @param rrsigRDATA RDATA for RRSIG record of rrset
  * @param rrset Array of ResponseRecords of same type returned in a single request. Must have raw_rdata field populated.
+ * @returns true if a key is found that validates the rrset against the rrsig, false otherwise
  */
 export async function verifyRRSIG(keys: CryptoKey[], rrsigRDATA: RDATA[RecordType.RRSIG], rrset: ResponseRecord<any>[]): Promise<boolean> {
     if (!(rrsigRDATA.algorithm in ALGORITHMS)) throw new Error("Unable to verify rrsig, unsupported algorithm " + rrsigRDATA.algorithm);
     const data = signedData(rrsigRDATA, rrset);
     for (const key of keys) {
-        if (await crypto.subtle.verify(ALGORITHMS[rrsigRDATA.algorithm], key, rrsigRDATA.signature, data))
+        if (await _verify(ALGORITHMS[rrsigRDATA.algorithm], key, rrsigRDATA.signature, data))
             return true;
     }
     return false;
@@ -300,9 +355,11 @@ export async function verifyRRSIG(keys: CryptoKey[], rrsigRDATA: RDATA[RecordTyp
  */
 export function signedData(rrsigRDATA: RDATA[RecordType.RRSIG], rrset: ResponseRecord<any>[]): ArrayBuffer {
     // signed_data = RRSIG_RDATA | RR(1) | RR(2)...
-    let bufferLen = 18 + rrsigRDATA.signer.reduce((acc, cur) => acc + cur.length, 0) + rrsigRDATA.signer.length;
+    let bufferLen = 18 /* RRSIG fixed width field total size */ + rrsigRDATA.signer.reduce((acc, cur) => acc + cur.length, 0) + rrsigRDATA.signer.length;
     for (const rr of rrset) {
-        bufferLen += rr.NAME.reduce((acc, cur) => acc + cur.length, 0) + rr.NAME.length;
+        if (rrsigRDATA.labels > rr.NAME.length - 1) throw new DNSSECValidationError(`${rr.NAME} ${RecordType[rr.TYPE]} is a higher level domain than the RRSIG validating it`);
+        bufferLen += rr.NAME.slice(-(rrsigRDATA.labels + 1)).reduce((acc, cur) => acc + cur.length, 0);
+        bufferLen += rrsigRDATA.labels + 1 + (rr.NAME.length > rrsigRDATA.labels + 1 ? 2 : 0); // Include length bytes
         bufferLen += 10; // type | class | OrigTTL | RDATA length
         bufferLen += rr.raw_rdata.byteLength;
     }
@@ -310,6 +367,7 @@ export function signedData(rrsigRDATA: RDATA[RecordType.RRSIG], rrset: ResponseR
     const encoder = serialize(data);
     encoder.next();
 
+    // https://datatracker.ietf.org/doc/html/rfc4034#section-6.2
     // RRSIG_RDATA is the wire format of the RRSIG RDATA fields with the Signature field excluded and the Signer's Name in canonical form.
     for (const [field, type] of Object.entries(_rdata.get(RecordType.RRSIG))) {
         if (field === "signer") {
@@ -319,6 +377,7 @@ export function signedData(rrsigRDATA: RDATA[RecordType.RRSIG], rrset: ResponseR
         }
     }
 
+    // https://datatracker.ietf.org/doc/html/rfc4034#section-6.3
     // RR(i) = name | type | class | OrigTTL | RDATA length | RDATA
     // rrset sorted by treating the RDATA portion of the canonical form of each RR as a left-justified
     // unsigned octet sequence in which the absence of an octet sorts before a zero octet
@@ -347,6 +406,7 @@ export function signedData(rrsigRDATA: RDATA[RecordType.RRSIG], rrset: ResponseR
                     // if rrsig_labels = fqdn_labels, name = fqdn
                     // if rrsig_labels < fqdn_labels, name = "*." | the rightmost rrsig_label labels of the fqdn
                     // if rrsig_labels > fqdn_labels the RRSIG RR did not pass the necessary validation checks and MUST NOT be used to authenticate this RRset.
+                    if (rrsigRDATA.labels > val.length - 1) throw new DNSSECValidationError(`${rr.NAME} ${RecordType[rr.TYPE]} is a higher level domain than the RRSIG validating it`);
                     if (rrsigRDATA.labels < val.length - 1) val = ["*", ...val.slice(-(rrsigRDATA.labels + 1))];
                     val = (val as string[]).map(v => v.toLowerCase());
                     break;
@@ -364,6 +424,7 @@ export function signedData(rrsigRDATA: RDATA[RecordType.RRSIG], rrset: ResponseR
         // SRV, DNAME, A6, RRSIG, or NSEC, all uppercase US-ASCII letters in
         // the DNS names contained within the RDATA are replaced by the
         // corresponding lowercase US-ASCII letters
+        // this is incomplete as we are currently using the pre-built raw_rdata rather than regenerating it
         // tslint:disable-next-line
         encoder.next(['opaque', new Uint8Array(rr.raw_rdata)]);
     }
@@ -375,7 +436,7 @@ export function signedData(rrsigRDATA: RDATA[RecordType.RRSIG], rrset: ResponseR
  * @param records Array of ResponseRecords including accompanying RRSIG
  * @param resolver Resolver instance used to make subsequent DNS requests needed to verify response
  */
-async function validateRecords(records: ResponseRecord<any>[], resolver: BaseResolver) {
+export async function validateRecords(records: ResponseRecord<any>[], resolver: BaseResolver) {
     const rrsigs = records.filter(r => r.TYPE === RecordType.RRSIG) as ResponseRecord<RecordType.RRSIG>[];
     if (rrsigs.length === 0) throw new Error('Unable to validate records, no RRSIG records present');
 
@@ -435,23 +496,25 @@ async function validateRecords(records: ResponseRecord<any>[], resolver: BaseRes
  * @param resolver Resolver instance used to make subsequent DNS requests needed to verify response
  */
 export default async function validate(response: DNSResponse, resolver: BaseResolver) {
-    if (!await validateRecords(response.answer, resolver)) return false;
-    if (!await validateRecords(response.authority, resolver)) return false;
-    if (!await validateRecords(response.additional, resolver)) return false;
+    if (!(await Promise.all([
+        validateRecords(response.answer, resolver),
+        validateRecords(response.authority, resolver),
+        validateRecords(response.additional, resolver)
+    ])).every(x => x)) return false;
 
     // After validating all rrsets, check that all Questions have non-empty responses or NSEC records
     // https://www.rfc-editor.org/rfc/rfc4035#section-5.4
-    const questions = new Map<string, Question>(response.question.map(q=>[q.QNAME.join(".").toLowerCase(), q]));
-    const rrsets = new Set(response.answer.map(rr=>`${rr.NAME.join(".").toLowerCase()}_${rr.CLASS}_${rr.TYPE}`));
-    const nsecMap = new Map<string, AuthorityRecord<RecordType.NSEC>|AuthorityRecord<RecordType.NSEC3>>(response.authority.filter(rr => rr.TYPE === RecordType.NSEC || rr.TYPE === RecordType.NSEC3).map((rr: AuthorityRecord<RecordType.NSEC>)=>[rr.NAME.join(".").toLowerCase(), rr]));
-    const nsecSigs = new Map<string, AuthorityRecord<RecordType.RRSIG>>(response.authority.filter(rr => rr.TYPE === RecordType.RRSIG && (rr as ResponseRecord<RecordType.RRSIG>).RDATA.type_covered in [RecordType.NSEC, RecordType.NSEC3]).map((rr: AuthorityRecord<RecordType.RRSIG>)=>[rr.NAME.join(".").toLowerCase(), rr]));
-    const names = canonicalSortLabels([...Array.from(nsecMap.values()).map(n=>n.NAME), ...response.question.map(q=>q.QNAME)]).map(n=>n.join("."));
+    const questions = new Map<string, Question>(response.question.map(q => [q.QNAME.join(".").toLowerCase(), q]));
+    const rrsets = new Set(response.answer.map(rr => `${rr.NAME.join(".").toLowerCase()}_${rr.CLASS}_${rr.TYPE}`));
+    const nsecMap = new Map<string, AuthorityRecord<RecordType.NSEC> | AuthorityRecord<RecordType.NSEC3>>(response.authority.filter(rr => rr.TYPE === RecordType.NSEC || rr.TYPE === RecordType.NSEC3).map((rr: AuthorityRecord<RecordType.NSEC>) => [rr.NAME.join(".").toLowerCase(), rr]));
+    const nsecSigs = new Map<string, AuthorityRecord<RecordType.RRSIG>>(response.authority.filter(rr => rr.TYPE === RecordType.RRSIG && (rr as ResponseRecord<RecordType.RRSIG>).RDATA.type_covered in [RecordType.NSEC, RecordType.NSEC3]).map((rr: AuthorityRecord<RecordType.RRSIG>) => [rr.NAME.join(".").toLowerCase(), rr]));
+    const names = canonicalSortLabels([...Array.from(nsecMap.values()).map(n => n.NAME), ...response.question.map(q => q.QNAME)]).map(n => n.join("."));
     const nameDigests = new Map<string, ArrayBuffer>();
-    const soa = new Map<string, AuthorityRecord<RecordType.SOA>>(response.authority.filter(rr => rr.TYPE === RecordType.SOA).map((rr: AuthorityRecord<RecordType.SOA>)=>[rr.NAME.join(".").toLowerCase(), rr]));
+    const soa = new Map<string, AuthorityRecord<RecordType.SOA>>(response.authority.filter(rr => rr.TYPE === RecordType.SOA).map((rr: AuthorityRecord<RecordType.SOA>) => [rr.NAME.join(".").toLowerCase(), rr]));
     return true;
     for (const [name, q] of questions.entries()) {
         const qIndex = names.lastIndexOf(name);
-        const nsecName = names.at(qIndex-1);
+        const nsecName = names.at(qIndex - 1);
         const nsec = nsecMap.get(nsecName);
         const sig = nsecSigs.get(nsecName);
 
@@ -499,12 +562,12 @@ export default async function validate(response: DNSResponse, resolver: BaseReso
                     encoder.next();
                     encoder.next(['string[]', nsec.NAME]);
                     new Uint8Array(nameWireFmt).set(salt, nameWireFmt.byteLength - salt.byteLength);
-                    hashedName = await crypto.subtle.digest(DIGESTS[nsec.RDATA.hash_algorithm], nameWireFmt);
+                    hashedName = await _digest(DIGESTS[nsec.RDATA.hash_algorithm], nameWireFmt);
                     for (let i = 1; i < nsec.RDATA.iterations; ++i) {
                         const concat = new Uint8Array(hashedName.byteLength + salt.byteLength);
                         concat.set(new Uint8Array(hashedName));
                         concat.set(salt, hashedName.byteLength);
-                        hashedName = await crypto.subtle.digest(DIGESTS[nsec.RDATA.hash_algorithm], concat);
+                        hashedName = await _digest(DIGESTS[nsec.RDATA.hash_algorithm], concat);
                     }
                     nameDigests.set(dotName, hashedName);
                 }

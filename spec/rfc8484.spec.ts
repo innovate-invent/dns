@@ -1,3 +1,7 @@
+/**
+ * Test suite for the RFC8484 Resolver
+ */
+
 import Resolver from '../src/rfc8484.js'
 import {ResolveOptions} from '../src/dns.js'
 
@@ -7,20 +11,21 @@ import expected from "./expected.js";
 import {cmp} from "./common.js";
 import {RecordType} from "../src/constants.js";
 import {DNSResponse} from "../src/rfc1035.js";
+import {base64url_decode} from "../src/base64url";
 
-type Test = {hostname: string, rrval?: (keyof typeof RecordType) | 'ANY', options?:ResolveOptions, result: any[] | DNSResponse, cmp?:string[], pending?:boolean};
+type Test = {hostname: string, rrval?: (keyof typeof RecordType) | 'ANY', options?:ResolveOptions, result: any[] | DNSResponse, cmp?:string[], pending?:boolean, raw?: string};
 
 describe('RFC8484 Resolver', () => {
-    it('should cancel requests', done => {
+    it('should cancel requests',()=> {
         const r = new Resolver();
-        r.resolve4(expected.A.host).then(()=>done(new Error("request completed"))).catch(()=>done());
+        // tslint:disable-next-line:no-unused-expression
+        expect(r.resolve4(expected.A.host)).to.eventually.be.rejected;
         r.cancel();
     });
 
     describe('resolve', () => {
-        const resolver = new Resolver();
         [
-            {hostname: expected.A.host, rrval: 'DNSKEY', result: expected.NSEC.records, options: {dnssec: true, raw: true}} as Test,
+            {hostname: expected.A.host, rrval: 'DNSKEY', result: expected.NSEC.records, options: {dnssec: true, raw: true}, raw: expected.DNSKEY.raw} as Test,
             /*{hostname: expected.A.host, rrval: undefined, result: expected.A.records},
             {hostname: expected.A.host, rrval: 'ANY', result: [], pending: true},
             {hostname: expected.A.host, rrval: 'A', result: {
@@ -34,16 +39,19 @@ describe('RFC8484 Resolver', () => {
             ...Object.entries(expected).map(([rrval, v])=>({hostname: v.host, rrval, result: v.records, cmp:v.cmp, pending:v.pending, options: v.options} as Test))*/
         ].forEach((test: Test) => {
             it(`should resolve ${test.rrval || 'A'} records for ${test.hostname} given rrval: ${test.rrval} and options: ${JSON.stringify(test.options)}`, test.pending ? undefined : async () => {
+                const resolver = new Resolver();/*{async fetch(input: RequestInfo | URL, init?: RequestInit) {
+                    return new Response(base64url_decode(test.raw));
+                }});*/
                 const args: [any] = [test.hostname];
                 if (test.rrval) args.push(test.rrval);
                 if (test.options) args.push(test.options);
                 let records;
-                try {
+                // try {
                     records = await resolver.resolve(...args);
-                } catch (e) {
+                // } catch (e) {
                     // tslint:disable-next-line:no-console
-                    console.log(e);
-                }
+                    // console.log(e);
+                // }
                 if (test.options && test.options.raw) {
                     const result = test.result as DNSResponse;
                     expect(records.header).to.eql(result.header);
