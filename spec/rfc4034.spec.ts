@@ -1,7 +1,15 @@
 // Hijack fetch to inject IANA response into getRootDS
 import {restoreFetch, setFetch} from "./common";
 
-import {canonicalSortLabels, importDNSKEY, labelCount, signedData, validateKSK, verifyRRSIG} from '../src/rfc4034.js'
+import {
+    canonicalSortLabels,
+    importDNSKEY,
+    labelCount,
+    signedData,
+    validateKSK,
+    validateRecords,
+    verifyRRSIG
+} from '../src/rfc4034.js'
 import {ALGORITHMS, DIGESTS, RecordType} from "../src/constants";
 import {RDATA} from "../src/rfc_rdata";
 import {AnswerRecord, CLASS, DNSResponse, Question, ResponseRecord} from "../src/rfc1035";
@@ -596,16 +604,74 @@ describe('RFC4034 DNSSEC', () => {
         })
     })
 
+    // tslint:disable-next-line:no-empty
+    async function fakeRootTrustAnchor(fetchCallback = () => {
+    }, algorithm = 13) {
+        const key = await (crypto.subtle.generateKey(ALGORITHMS[algorithm], true, ["verify", "sign"]) as Promise<CryptoKeyPair>);
+        const pubkey = await crypto.subtle.exportKey('raw', key.publicKey);
+        const digestData = [
+            0,                                   // ''
+            256,                                 // flags
+            3,                                   // protocol
+            13,                                  // algorithm
+            ...new Uint8Array(pubkey),
+        ];
+        const fakeTrustAnchorDoc = `<TrustAnchor>
+<Zone>.</Zone>
+<KeyDigest id="Kjqmt7v" validFrom="2010-07-15T00:00:00+00:00">
+<KeyTag>0</KeyTag>
+<Algorithm>13</Algorithm>
+<DigestType>2</DigestType>
+<Digest>
+${Array.from(new Uint8Array(await crypto.subtle.digest(DIGESTS[2], Uint8Array.from(digestData).buffer)), b => b.toString(16).padStart(2, '0')).join('')}
+</Digest>
+</KeyDigest>
+</TrustAnchor>`
+        setFetch(async (url) => {
+            fetchCallback();
+            expect(url).to.eq("https://data.iana.org/root-anchors/root-anchors.xml");
+            return new Response(fakeTrustAnchorDoc);
+        });
+        return {
+            NAME: [''],
+            TTL: 60,
+            CLASS: CLASS.IN,
+            TYPE: RecordType.DNSKEY,
+            RDATA: {
+                algorithm,
+                key_tag: 0,
+                secure_entry_point: false,
+                zone_key: true,
+                protocol: 3,
+                public_key: pubkey,
+            },
+            RDLENGTH: 4 + pubkey.byteLength,
+            raw_rdata: Uint8Array.from([
+                256,                                 // flags
+                3,                                   // protocol
+                13,                                  // algorithm
+                ...new Uint8Array(pubkey)
+            ]).buffer,
+        } as ResponseRecord<RecordType.DNSKEY>;
+    }
+
     class FakeResolver extends BaseResolver {
+        public keys: Record<string, CryptoKeyPair>;
         public pubkeys: Record<string, ArrayBuffer>;
         public ttl = 10;
         public called = 0;
         public expectedHostname?: string = undefined;
-        public responseCallback = (response: DNSResponse)=>response;
-        constructor(pubkeys: Record<string, ArrayBuffer>) {
-            super();
-            this.pubkeys = pubkeys;
+        public responseCallback = (response: DNSResponse) => response;
+
+        public static async build(domains: string[], algorithm: number = 13) {
+            const resolver = new this();
+            const keys = await Promise.all(domains.map(domain => crypto.subtle.generateKey(ALGORITHMS[algorithm], true, ["verify", "sign"]) as Promise<CryptoKeyPair>));
+            resolver.keys = Object.fromEntries(domains.map((domain, i) => [domain, keys[i]]));
+            const pubkeysData = await Promise.all(Object.values(keys).map((v) => crypto.subtle.exportKey('raw', v.publicKey)));
+            resolver.pubkeys = Object.fromEntries(pubkeysData.map((v, i) => [domains[i], v]));
+            return resolver;
         }
+
         cancel(): void {
             throw new Error('Method not implemented.');
         }
@@ -625,7 +691,7 @@ describe('RFC4034 DNSSEC', () => {
             // digest = digest_algorithm( DNSKEY owner name | DNSKEY RDATA);
             // DNSKEY RDATA = Flags | Protocol | Algorithm | Public Key.  "|" denotes concatenation
             const digestData = [
-                ...trimmedHostname.split('.').flatMap(s=>[s.length, ...Uint8Array.from(s, c=>c.charCodeAt(0))]),
+                ...trimmedHostname.split('.').flatMap(s => [s.length, ...Uint8Array.from(s, c => c.charCodeAt(0))]),
                 0,                                   // ''
                 256,                                 // flags
                 3,                                   // protocol
@@ -661,8 +727,6 @@ describe('RFC4034 DNSSEC', () => {
     describe('KSK validation', () => {
         const alg = 13;
         let resolver: FakeResolver;
-        let keys: Record<string, CryptoKeyPair>;
-        let pubkeys: Record<string, ArrayBuffer>;
         const dummyRootKSK = {
             NAME: [''],
             CLASS: CLASS.IN,
@@ -749,38 +813,11 @@ AwEAAa96jeuknZlaeSrvyAJj6ZHv28hhOKkx3rLGXVaC6rXTsDc449/cidltpkyGwCJNnOAlFNKF2jBo
 <Flags>257</Flags>
 </KeyDigest>
 </TrustAnchor>`;
-        let fakeTrustAnchorDoc: string;
         let fakeKSK: Record<string, AnswerRecord<RecordType.DNSKEY>>;
         beforeEach('set up resolver and test KSK', async () => {
-            keys = {
-                'root': await crypto.subtle.generateKey(ALGORITHMS[alg], true, ["verify", "sign"]) as CryptoKeyPair,
-                'com': await crypto.subtle.generateKey(ALGORITHMS[alg], true, ["verify", "sign"]) as CryptoKeyPair,
-                'example.com': await crypto.subtle.generateKey(ALGORITHMS[alg], true, ["verify", "sign"]) as CryptoKeyPair,
-            };
-            const pubkeysData = await Promise.all(Object.values(keys).map((v)=>crypto.subtle.exportKey('raw', v.publicKey)));
-            const pubkeysKeys = Object.keys(keys);
-            pubkeys = Object.fromEntries(pubkeysData.map((v, i)=>[pubkeysKeys[i], v]));
-            resolver = new FakeResolver(pubkeys);
-            const digestData = [
-                0,                                   // ''
-                256,                                 // flags
-                3,                                   // protocol
-                13,                                  // algorithm
-                ...new Uint8Array(pubkeys.root),
-            ];
-            fakeTrustAnchorDoc = `<TrustAnchor>
-<Zone>.</Zone>
-<KeyDigest id="Kjqmt7v" validFrom="2010-07-15T00:00:00+00:00">
-<KeyTag>0</KeyTag>
-<Algorithm>13</Algorithm>
-<DigestType>2</DigestType>
-<Digest>
-${Array.from(new Uint8Array(await crypto.subtle.digest(DIGESTS[2], Uint8Array.from(digestData).buffer)), b=>b.toString(16).padStart(2, '0')).join('')}
-</Digest>
-</KeyDigest>
-</TrustAnchor>`
-            fakeKSK = Object.fromEntries(Object.entries(pubkeys).map(([k, v])=>[k, {
-                NAME: [...(k === 'root' ? '' : (k + '.')).split('.')],
+            resolver = await FakeResolver.build(['com', 'example.com']);
+            fakeKSK = Object.fromEntries(Object.entries(resolver.pubkeys).map(([k, v]) => [k, {
+                NAME: [...(k + '.').split('.')],
                 TTL: 60,
                 CLASS: CLASS.IN,
                 TYPE: RecordType.DNSKEY,
@@ -802,6 +839,10 @@ ${Array.from(new Uint8Array(await crypto.subtle.digest(DIGESTS[2], Uint8Array.fr
             }]));
         })
         afterEach('restore fetch', restoreFetch)
+        afterEach('clean fakeKSK', () => {
+            fakeKSK = undefined;
+            resolver = undefined;
+        })
         it('fetch should be hooked for tests', async () => {
             const sentinel = {} as Response;
             setFetch(async () => sentinel);
@@ -809,121 +850,92 @@ ${Array.from(new Uint8Array(await crypto.subtle.digest(DIGESTS[2], Uint8Array.fr
         })
         it('should validate against the root', async () => {
             let called = false;
-            setFetch(async (url) => {
-                called = true;
-                expect(url).to.eq("https://data.iana.org/root-anchors/root-anchors.xml");
-                return new Response(fakeTrustAnchorDoc);
-            });
-            expect(await validateKSK(fakeKSK.root, resolver), 'KSK invalid').to.be.true;
+            const rootKSK = await fakeRootTrustAnchor(() => called = true);
+            expect(await validateKSK(rootKSK, resolver), 'KSK invalid').to.be.true;
             expect(called, 'fetch not called').to.be.true;
         })
-        it('should ensure only zone keys are validated', ()=>{
-            expect(validateKSK({...dummyRootKSK, RDATA: {...dummyRootKSK.RDATA, zone_key: false}}, resolver)).to.eventually.be.false;
+        it('should ensure only zone keys are validated', () => {
+            expect(validateKSK({
+                ...dummyRootKSK,
+                RDATA: {...dummyRootKSK.RDATA, zone_key: false}
+            }, resolver)).to.eventually.be.false;
         })
-        it('should validate non-root domains', async ()=>{
+        it('should validate non-root domains', async () => {
             let called = false;
-            setFetch(async (url) => {
-                called = true;
-                expect(url).to.eq("https://data.iana.org/root-anchors/root-anchors.xml");
-                return new Response(fakeTrustAnchorDoc);
-            });
+            await fakeRootTrustAnchor(() => called = true);
             expect(await validateKSK(fakeKSK['example.com'], resolver), 'KSK invalid').to.be.true;
             expect(called, 'fetch not called').to.be.false;
         })
-        it('should handle DS existing for the domain but no matching DS for the KSK', async ()=>{
+        it('should handle DS existing for the domain but no matching DS for the KSK', async () => {
             let called = false;
-            setFetch(async (url) => {
-                called = true;
-                expect(url).to.eq("https://data.iana.org/root-anchors/root-anchors.xml");
-                return new Response(fakeTrustAnchorDoc);
-            });
-            expect(await validateKSK(fakeKSK['example.com'], resolver), 'KSK invalid').to.be.true;
+            await fakeRootTrustAnchor(() => called = true);
             const ksk = fakeKSK['example.com'];
+            expect(await validateKSK(ksk, resolver), 'KSK invalid').to.be.true;
+            ksk.RDATA.key_tag = 1;
             expect(await validateKSK(ksk, resolver), 'KSK not rejected for non-matching key_tag').to.be.false;
             ksk.RDATA.key_tag = 0;
             ksk.RDATA.algorithm = 0;
             expect(await validateKSK(ksk, resolver), 'KSK not rejected for non-matching algorithm').to.be.false;
             ksk.RDATA.algorithm = 13;
-            ksk.RDATA.public_key = pubkeys.com;
+            ksk.RDATA.public_key = resolver.pubkeys.com;
             ksk.raw_rdata = fakeKSK.com.raw_rdata;
             expect(await validateKSK(ksk, resolver), 'KSK not rejected for non-matching pubkey').to.be.false;
             expect(called, 'fetch called').to.be.false;
         })
-        it('should handle repeated digest types/DS records', async ()=>{
+        it('should handle repeated digest types/DS records', async () => {
             let called = false;
-            setFetch(async (url) => {
-                called = true;
-                expect(url).to.eq("https://data.iana.org/root-anchors/root-anchors.xml");
-                return new Response(fakeTrustAnchorDoc);
-            });
-            resolver.responseCallback = (resp)=>{
+            await fakeRootTrustAnchor(() => called = true);
+            resolver.responseCallback = (resp) => {
                 resp.answer = [resp.answer[0], resp.answer[0]];
                 return resp;
             }
             expect(await validateKSK(fakeKSK['example.com'], resolver), 'KSK invalid').to.be.true;
             expect(called, 'fetch not called').to.be.false;
         })
-        it('should handle the KSK name being uppercase', async ()=>{
+        it('should handle the KSK name being uppercase', async () => {
             let called = false;
-            setFetch(async (url) => {
-                called = true;
-                expect(url).to.eq("https://data.iana.org/root-anchors/root-anchors.xml");
-                return new Response(fakeTrustAnchorDoc);
-            });
+            await fakeRootTrustAnchor(() => called = true);
             const ksk = fakeKSK['example.com'];
-            ksk.NAME = ksk.NAME.map(s=>s.toUpperCase())
+            ksk.NAME = ksk.NAME.map(s => s.toUpperCase())
             expect(await validateKSK(ksk, resolver), 'failed to handle uppercase name').to.be.true;
             expect(called, 'fetch not called').to.be.false;
         })
-        it('should reject a KSK with a unexpected protocol', async ()=>{
+        it('should reject a KSK with a unexpected protocol', async () => {
             let called = false;
-            setFetch(async (url) => {
-                called = true;
-                expect(url).to.eq("https://data.iana.org/root-anchors/root-anchors.xml");
-                return new Response(fakeTrustAnchorDoc);
-            });
+            await fakeRootTrustAnchor(() => called = true);
             const ksk = fakeKSK['example.com'];
             ksk.RDATA.protocol = 0;
             expect(await validateKSK(ksk, resolver), 'failed to reject unknown protocol').to.be.false;
             expect(called, 'fetch not called').to.be.false;
         })
-        it('should handle the KSK raw_rdata not being populated', ()=>{
-            expect(validateKSK({...dummyRootKSK, raw_rdata: undefined}, resolver)).to.eventually.be.rejectedWith('raw_rdata');
+        it('should handle the KSK raw_rdata not being populated', () => {
+            expect(validateKSK({
+                ...dummyRootKSK,
+                raw_rdata: undefined
+            }, resolver)).to.eventually.be.rejectedWith('raw_rdata');
         })
         describe('fetching DS', () => { // test the unexposed getStoredDS via validateKSK
-            it('should handle all cached DS being expired', async ()=>{
+            it('should handle all cached DS being expired', async () => {
                 let called = false;
-                setFetch(async (url) => {
-                    called = true;
-                    expect(url).to.eq("https://data.iana.org/root-anchors/root-anchors.xml");
-                    return new Response(fakeTrustAnchorDoc);
-                });
+                await fakeRootTrustAnchor(() => called = true);
                 resolver.ttl = 0;
                 expect(await validateKSK(fakeKSK.com, resolver), 'KSK invalid').to.be.true;
                 expect(await validateKSK(fakeKSK.com, resolver), 'KSK invalid').to.be.true;
                 expect(resolver.called, 'resolve not called twice due to cache expiry').to.eq(2);
                 expect(called, 'fetch called').to.be.false;
             })
-            it('should cache DS records', async ()=>{
+            it('should cache DS records', async () => {
                 let called = false;
-                setFetch(async (url) => {
-                    called = true;
-                    expect(url).to.eq("https://data.iana.org/root-anchors/root-anchors.xml");
-                    return new Response(fakeTrustAnchorDoc);
-                });
+                await fakeRootTrustAnchor(() => called = true);
                 resolver.ttl = 10;
                 expect(await validateKSK(fakeKSK.com, resolver), 'KSK invalid').to.be.true;
                 expect(await validateKSK(fakeKSK.com, resolver), 'KSK invalid').to.be.true;
                 expect(resolver.called, 'resolve called twice due to not caching').to.eq(1);
                 expect(called, 'fetch called').to.be.false;
             })
-            it('should request DS records for the appropriate domain', async ()=>{
+            it('should request DS records for the appropriate domain', async () => {
                 let called = false;
-                setFetch(async (url) => {
-                    called = true;
-                    expect(url).to.eq("https://data.iana.org/root-anchors/root-anchors.xml");
-                    return new Response(fakeTrustAnchorDoc);
-                });
+                await fakeRootTrustAnchor(() => called = true);
                 resolver.ttl = 10;
                 resolver.expectedHostname = 'example.com.';
                 expect(await validateKSK(fakeKSK['example.com'], resolver), 'KSK invalid').to.be.true;
@@ -980,7 +992,7 @@ ${Array.from(new Uint8Array(await crypto.subtle.digest(DIGESTS[2], Uint8Array.fr
                 await validateKSK(dummyRootKSK, resolver);
                 expect(called, 'fetch called twice').to.be.false;
             })
-            it('should handle all root digests being expired', async ()=>{
+            it('should handle all root digests being expired', async () => {
                 let called = false;
                 setFetch(async (url) => {
                     called = true;
@@ -990,6 +1002,74 @@ ${Array.from(new Uint8Array(await crypto.subtle.digest(DIGESTS[2], Uint8Array.fr
                 expect(await validateKSK(dummyRootKSK, resolver)).to.be.false;
                 expect(called, 'fetch not called').to.be.true;
             })
+        })
+    })
+
+    describe('validate RRSet against RRSIG', () => {
+        let resolver: FakeResolver;
+        beforeEach('set up resolver', async () => {
+            resolver = await FakeResolver.build(['com', 'example.com', 'sub.example.com', 'subexample.com']);
+        })
+        it('should handle empty RRSet', async () => {
+            expect(validateRecords([], resolver)).to.eventually.rejectedWith('Unable to validate');
+        })
+        it('should handle a variety of record types', async () => {
+            const ARecord = {
+                NAME: ['example', 'com', ''],
+                TYPE: RecordType.A,
+                CLASS: CLASS.IN,
+                TTL: 10,
+                RDATA: [1, 2, 3, 4],
+                raw_rdata: Uint8Array.from([0, 1, 2, 3]).buffer,
+                RDLENGTH: 4,
+            };
+            const DNSKEY = {
+                NAME: ['example', 'com', ''],
+                TYPE: RecordType.DNSKEY,
+                CLASS: CLASS.IN,
+                TTL: 10,
+                RDATA: {
+                    key_tag: 0,
+                    protocol: 3,
+                    zone_key: true,
+                    algorithm: 13,
+                    public_key: resolver.pubkeys['example.com'],
+                    secure_entry_point: false,
+                } as RDATA[RecordType.DNSKEY],
+                RDLENGTH: 4 + resolver.pubkeys['example.com'].byteLength,
+                raw_rdata: Uint8Array.from([
+                    256,                                 // flags
+                    3,                                   // protocol
+                    13,                                  // algorithm
+                    ...new Uint8Array(resolver.pubkeys['example.com'])
+                ]).buffer,
+            };
+            const RRSIG = {
+                NAME: ['example', 'com', ''],
+                TYPE: RecordType.RRSIG,
+                CLASS: CLASS.IN,
+                TTL: 10,
+                RDATA: {
+                    key_tag: 0,
+                    labels: 2,
+                    algorithm: 13,
+                    original_ttl: 10,
+                    type_covered: RecordType.A,
+                    signer: ['example', 'com'],
+                    sig_expiration: Date.now() + 10000,
+                    sig_inception: Date.now() - 10000,
+                } as RDATA[RecordType.RRSIG],
+            } as ResponseRecord<RecordType.RRSIG>;
+            RRSIG.RDATA.signature = await crypto.subtle.sign(ALGORITHMS[13], resolver.keys['example.com'].privateKey, signedData(RRSIG.RDATA, [ARecord, DNSKEY]));
+            expect(validateRecords([ARecord, DNSKEY, RRSIG], resolver)).to.eventually.be.true;
+        })
+        it('should correctly match the RRSIG to the RRSubset', async () => {
+        })
+        it('should correctly handle combinations of a.foo.bar and afoo.bar for RRSIG signer', async () => {
+        })
+        it('should correctly reject invalid records', async () => {
+        })
+        it('should correctly reject expired RRSIG', async () => {
         })
     })
 // TODO https://github.com/jhnns/rewire

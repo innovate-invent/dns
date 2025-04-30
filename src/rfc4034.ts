@@ -222,10 +222,15 @@ export async function validateKSK(ksk: ResponseRecord<RecordType.DNSKEY>, resolv
             digests[d.digest_type] = digests[d.digest_type] || new _Uint8Array(await _digest(DIGESTS[d.digest_type], data));
             const queryDigest = digests[d.digest_type];
             const refDigest = new _Uint8Array(d.digest);
+            console.log(refDigest.byteLength, queryDigest.byteLength, refDigest.every((v, i) => v === queryDigest[i]))
+            refDigest.forEach((v, i)=>{
+                if (v !== queryDigest[i]) console.log(ds.length, 'byte mismatch', i, v, queryDigest[i]);
+            });
             if (refDigest.byteLength === queryDigest.byteLength &&
                 refDigest.every((v, i) => v === queryDigest[i])
             ) return true;
         }
+        console.log('hit', d.key_tag, ksk.RDATA.key_tag, d.algorithm, ksk.RDATA.algorithm)
     }
     return false;
 }
@@ -333,7 +338,7 @@ export function canonicalSortLabels(names: string[][]): string[][] {
 /**
  * Verify the rrset matches the RRSIG record signed with one of keys
  * @param keys Array of candidate keys, multiple can be attempted in the event that the signing key is ambiguous
- * @param rrsigRDATA RDATA for RRSIG record of rrset
+ * @param rrsigRDATA RDATA for RRSIG record of rrset, the inception and expiration must already be validated
  * @param rrset Array of ResponseRecords of same type returned in a single request. Must have raw_rdata field populated.
  * @returns true if a key is found that validates the rrset against the rrsig, false otherwise
  */
@@ -435,12 +440,13 @@ export function signedData(rrsigRDATA: RDATA[RecordType.RRSIG], rrset: ResponseR
  * Validate array of records against included RRSIGs
  * @param records Array of ResponseRecords including accompanying RRSIG
  * @param resolver Resolver instance used to make subsequent DNS requests needed to verify response
+ * @throws Error when some required relationship between the records, the DNSKEYs, and the RRSIGs is not met
  */
 export async function validateRecords(records: ResponseRecord<any>[], resolver: BaseResolver) {
     const rrsigs = records.filter(r => r.TYPE === RecordType.RRSIG) as ResponseRecord<RecordType.RRSIG>[];
     if (rrsigs.length === 0) throw new Error('Unable to validate records, no RRSIG records present');
 
-    const now = Math.floor(Date.now() / 1000);
+    const now = Math.floor(_now() / 1000);
 
     // Split up rrset on NAME, CLASS, TYPE
     const rrsets = Array.from(records.filter(r => r.TYPE !== RecordType.RRSIG).reduce((acc, rr) => {
@@ -473,7 +479,9 @@ export async function validateRecords(records: ResponseRecord<any>[], resolver: 
                 // Handle KSK
                 const ksk = rrset.find(r => r.RDATA.key_tag === rrsig.RDATA.key_tag && r.RDATA.zone_key);
                 if (ksk === undefined) throw new Error('Unable to validate DNSKEY, missing matching KSK');
-                if (!rr.NAME.join('.').endsWith(rrsig.RDATA.signer.join('.'))) throw new Error('Unable to validate DNSKEY, RRSIG signer mismatch'); // TODO endsWith or equals?
+                // TODO endsWith or equals? Also, need to differentiate between a.foo.bar and afoo.bar when checking
+                //  endswith foo.bar
+                if (!rr.NAME.join('.').endsWith(rrsig.RDATA.signer.join('.'))) throw new Error('Unable to validate DNSKEY, RRSIG signer mismatch');
                 if (!await validateKSK(ksk, resolver)) throw new Error('Unable to validate DNSKEY, invalid KSK');
                 // Verify rrset with KSK
                 keys = [await importDNSKEY(ksk.RDATA)];
