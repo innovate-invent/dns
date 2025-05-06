@@ -1,17 +1,17 @@
 import {RecordType} from "./constants.js";
 import {Tokenizer, TokenType} from "./rfc1035.js";
 
-// tslint:disable:no-bitwise
+// eslint-disable:no-bitwise
 
 type IP4ADDR = [number, number, number, number];
 type IP6ADDR = [number, number, number, number, number, number, number, number];
 
 function IP4ADDR(d: Tokenizer): IP4ADDR {
-    return (new Array(4)).fill(undefined).map(x => Number(d.next('u8').value)) as IP4ADDR;
+    return (new Array(4)).fill(undefined).map(() => Number(d.next('u8').value)) as IP4ADDR;
 }
 
 function IP6ADDR(d: Tokenizer): IP6ADDR {
-    return (new Array(8)).fill(undefined).map(x => Number(d.next('u16').value)) as IP6ADDR;
+    return (new Array(8)).fill(undefined).map(() => Number(d.next('u16').value)) as IP6ADDR;
 }
 
 function EXP(d: Tokenizer): number {
@@ -393,14 +393,14 @@ _rdata.set(RecordType.NID, 'opaque');
 _rdata.set(RecordType.L32, 'opaque');
 _rdata.set(RecordType.L64, 'opaque');
 _rdata.set(RecordType.LP, 'opaque');
-_rdata.set(RecordType.EUI48, (d: Tokenizer) => (new Array(6)).fill(undefined).map(x => d.next('u8').value as number));
+_rdata.set(RecordType.EUI48, (d: Tokenizer) => (new Array(6)).fill(undefined).map(() => d.next('u8').value as number));
 _rdata.set(RecordType.EUI64, 'opaque');
 _rdata.set(RecordType.TSIG, {
     algorithm_name: DOMAINNAME,
     time_signed_upper: 'u16',
     time_signed: 'u32',
     fudge: 'u16',
-    MAC: (d: Tokenizer) => (new Array(d.next('u16').value as number)).fill(undefined).map(x => d.next('u8').value as number),
+    MAC: (d: Tokenizer) => (new Array(d.next('u16').value as number)).fill(undefined).map(() => d.next('u8').value as number),
     original_id: 'u16',
     error: 'u16',
     other_len: 'u16',

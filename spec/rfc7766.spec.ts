@@ -11,11 +11,12 @@ import {expect} from "chai";
 type Test = {hostname: string, rrval?: (keyof typeof RecordType) | 'ANY', options?:ResolveOptions, result: any[] | DNSResponse, cmp?:string[], pending?:boolean};
 
 describe('RFC7766 Resolver', () => {
-    it('should cancel requests', (t) => {
+    it('should cancel requests', async (t) => {
         const r = new Resolver();
-        // tslint:disable-next-line:no-unused-expression
-        expect(r.resolve4(expected.A.host)).to.eventually.be.rejected;
+        // eslint-disable-next-line:no-unused-expression
+        const promise = expect(r.resolve4(expected.A.host)).to.eventually.be.rejected;
         r.cancel();
+        return promise;
     });
 
     describe('resolve', () => {
@@ -42,7 +43,7 @@ describe('RFC7766 Resolver', () => {
                 try {
                     records = await resolver.resolve(...args);
                 } catch (e) {
-                    // tslint:disable-next-line:no-console
+                    // eslint-disable-next-line:no-console
                     console.log(e);
                 }
                 if (test.options && test.options.raw) {

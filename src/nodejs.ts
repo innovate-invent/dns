@@ -1,6 +1,6 @@
-import {AnswerRecord} from "./rfc1035";
-import {RecordType} from "./constants";
-import {RDATA} from "./rfc_rdata";
+import {AnswerRecord} from "./rfc1035.js";
+import {RecordType} from "./constants.js";
+import {RDATA} from "./rfc_rdata.js";
 import {
     AnyAAAARecord,
     AnyARecord, AnyCAARecord,
@@ -9,7 +9,7 @@ import {
     AnyNSRecord,
     AnyPTRRecord,
     AnySOARecord, AnySRVRecord, AnyTXTRecord, CAARecord, MXRecord, NAPTRRecord, ResolveOptions, SRVRecord
-} from "./dns";
+} from "./dns.js";
 
 /**
  * Convert A or AAAA IP addresses to string, with IP6 shortening convention
@@ -51,7 +51,7 @@ function ipString(type: RecordType, ip: number[]): string {
  * @param rrtype Query rrtype
  * @param options Resolve options
  */
-export function toNodeJSResponse(answer: AnswerRecord<any>[], rrtype: string, options?: ResolveOptions): any {
+export function toNodeJSResponse(answer: AnswerRecord<any>[], rrtype: string, options?: ResolveOptions): any { 
     let rrset = answer.filter(r => r.TYPE !== RecordType.RRSIG);
     if (rrtype in RecordType) {
         rrset = answer.filter(r => r.TYPE === RecordType[rrtype as unknown as RecordType]);
@@ -70,6 +70,7 @@ export function toNodeJSResponse(answer: AnswerRecord<any>[], rrtype: string, op
         case 'CNAME':
         case 'NS':
         case 'PTR':
+            
             return rrset.map((item: AnswerRecord<RecordType.CNAME|RecordType.NS|RecordType.PTR>) => item.RDATA.join ? item.RDATA.filter((i: any) => !!i).join('.') : item.RDATA);
         case '*':
             return rrset.map((item: AnswerRecord<keyof RDATA>) => {

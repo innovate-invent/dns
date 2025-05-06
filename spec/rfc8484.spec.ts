@@ -4,23 +4,24 @@
 
 import Resolver from '../src/rfc8484.js'
 import {ResolveOptions} from '../src/dns.js'
+import { expect, assert } from "chai";
 
-const expect = chai.expect;
 
 import expected from "./expected.js";
 import {cmp} from "./common.js";
 import {RecordType} from "../src/constants.js";
 import {DNSResponse} from "../src/rfc1035.js";
-import {base64url_decode} from "../src/base64url";
+import {base64url_decode} from "../src/base64url.js";
 
 type Test = {hostname: string, rrval?: (keyof typeof RecordType) | 'ANY', options?:ResolveOptions, result: any[] | DNSResponse, cmp?:string[], pending?:boolean, raw?: string};
 
 describe('RFC8484 Resolver', () => {
-    it('should cancel requests',()=> {
+    it('should cancel requests', async ()=> {
         const r = new Resolver();
-        // tslint:disable-next-line:no-unused-expression
-        expect(r.resolve4(expected.A.host)).to.eventually.be.rejected;
+        // eslint-disable-next-line:no-unused-expression
+        const promise = expect(r.resolve4(expected.A.host)).to.eventually.be.rejected;
         r.cancel();
+        return promise;
     });
 
     describe('resolve', () => {
@@ -49,7 +50,7 @@ describe('RFC8484 Resolver', () => {
                 // try {
                     records = await resolver.resolve(...args);
                 // } catch (e) {
-                    // tslint:disable-next-line:no-console
+                    // eslint-disable-next-line:no-console
                     // console.log(e);
                 // }
                 if (test.options && test.options.raw) {

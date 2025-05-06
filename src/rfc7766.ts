@@ -3,10 +3,9 @@
  * https://tools.ietf.org/html/rfc7766
  */
 
-import {createConnection, Socket} from "node:net";
+import {createConnection} from "node:net";
 
-import {parseResponse, DNSResponse as DNSResponse, WireFormatResolver} from "./rfc1035.js";
-import {DNSError} from "./dns";
+import {DNSResponse as DNSResponse, parseResponse, WireFormatResolver} from "./rfc1035.js";
 
 export default class Resolver extends WireFormatResolver {
     protected servers: string[] = ['1.1.1.1:53', '208.67.222.222:53', '208.67.220.220:53', '94.140.14.140:53', '94.140.14.141:53', '8.8.8.8:53', '8.8.4.4:53', '9.9.9.9:53'];
@@ -16,7 +15,7 @@ export default class Resolver extends WireFormatResolver {
         const response: ArrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
             const chunks: Buffer[] = [];
             const conn = createConnection(parseInt(port, 10), host);
-            abortSignal.addEventListener("abort", ev => conn.resetAndDestroy());
+            abortSignal.addEventListener("abort", () => conn.resetAndDestroy());
             conn.on('ready', () => {
                 conn.end(new Uint8Array(request));
             }).on('data', data => {

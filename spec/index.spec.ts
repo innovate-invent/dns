@@ -10,13 +10,13 @@ import {DNSError, SOARecord} from "../src/dns.js";
 import expected, {Expected} from "./expected.js";
 
 import {RecordType} from "../src/constants.js";
-import {base64url_decode} from "../src/base64url";
+import {base64url_decode} from "../src/base64url.js";
 
-const expect = chai.expect;
+import { expect, assert } from "chai";
 
 let rawData;
 
-// tslint:disable:no-unused-expression
+// eslint-disable:no-unused-expression
 
 function testRRType(f: (host: string, cb: (err?: DNSError, addresses?: any[])=>void)=>void, rrval: keyof typeof RecordType | 'ANY'): void {
     const e = expected[rrval];

@@ -4,8 +4,8 @@
  */
 
 import {parseResponse, DNSResponse as DNSResponse, WireFormatResolver} from "./rfc1035.js";
-import {base64url_encode} from "./base64url";
-import {BaseResolverOptions} from "./base_resolver";
+import {base64url_encode} from "./base64url.js";
+import {BaseResolverOptions} from "./base_resolver.js";
 
 export default class Resolver extends WireFormatResolver {
     protected servers: string[] = ['cloudflare-dns.com', 'doh.opendns.com', 'unfiltered.adguard-dns.com', 'dns.google', 'dns.quad9.net'];

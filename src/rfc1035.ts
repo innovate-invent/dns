@@ -1,11 +1,11 @@
 import {RecordType} from "./constants.js";
 import * as constants from "./constants.js";
 import RDATA, {RDATA as RDATATypes} from "./rfc_rdata.js"
-import {DNSError, ResolveOptions} from "./dns";
-import {BaseResolver} from "./base_resolver";
-import validate from "./rfc4034";
-import {toNodeJSResponse} from "./nodejs";
-import {base64url_encode} from "./base64url";
+import {DNSError, ResolveOptions} from "./dns.js";
+import {BaseResolver} from "./base_resolver.js";
+import validate from "./rfc4034.js";
+import {toNodeJSResponse} from "./nodejs.js";
+import {base64url_encode} from "./base64url.js";
 
 const CACHE_NAME = '@i2labs.ca/dns';
 
@@ -15,22 +15,22 @@ const CACHE_NAME = '@i2labs.ca/dns';
  * @param name String of strings containing domain name components
  */
 export function domainNameLen(name: string[]): number {
-    return name.length + name.reduce((a,c)=>a+c.length, 0) + ( name[name.length-1].length === 0 ? 0 : 1 );
+    return name.length + name.reduce((a, c) => a + c.length, 0) + (name[name.length - 1].length === 0 ? 0 : 1);
 }
 
-// tslint:disable:no-bitwise
+// eslint-disable:no-bitwise
 export interface Header {
     ID: number,
-    QR: 0|1,
-    Opcode: 0|1|2|4|5,
-    AA: 0|1,
-    TC: 0|1,
-    RD: 0|1,
-    RA: 0|1,
+    QR: 0 | 1,
+    Opcode: 0 | 1 | 2 | 4 | 5,
+    AA: 0 | 1,
+    TC: 0 | 1,
+    RD: 0 | 1,
+    RA: 0 | 1,
     Z?: undefined,
-    AD: 0|1,
-    CD: 0|1,
-    RCODE?: 0|1|2|3|4|5|6|7|8|9|10|16|17|18|19|20|21|22, // TODO create enum https://www.rfc-editor.org/rfc/rfc6895.html#section-2.3
+    AD: 0 | 1,
+    CD: 0 | 1,
+    RCODE?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 16 | 17 | 18 | 19 | 20 | 21 | 22, // TODO create enum https://www.rfc-editor.org/rfc/rfc6895.html#section-2.3
     QDCOUNT: number,
     ANCOUNT?: number,
     NSCOUNT?: number,
@@ -147,14 +147,15 @@ export class Question {
     QNAME: string[];
     QTYPE: RecordType;
     QCLASS: CLASS | 255; // TODO create enum
-    constructor(QNAME: string[], QTYPE: RecordType, QCLASS: CLASS|255 = CLASS.IN) {
+    constructor(QNAME: string[], QTYPE: RecordType, QCLASS: CLASS | 255 = CLASS.IN) {
         this.QNAME = QNAME;
         this.QTYPE = QTYPE;
         this.QCLASS = QCLASS;
     }
+
     static equals(q1: Question, q2: Question) {
         return q1.QNAME.length === q2.QNAME.length &&
-            q1.QNAME.every((v, i)=>v === q2.QNAME[i]) &&
+            q1.QNAME.every((v, i) => v === q2.QNAME[i]) &&
             q1.QTYPE === q2.QTYPE &&
             q1.QCLASS === q2.QCLASS;
     }
@@ -214,7 +215,7 @@ export const record = {
 //                     according to the TYPE and CLASS of the resource record.
 //                     For example, the if the TYPE is A and the CLASS is IN,
 //                     the RDATA field is a 4 octet ARPA Internet address.
-} as Record<keyof Omit<ResponseRecord<any>, "RDATA">, TokenType>;
+} as Record<keyof Omit<ResponseRecord<any>, "RDATA">, TokenType>; 
 
 export interface Edns0Opt {
     NAME: string[],
@@ -225,8 +226,10 @@ export interface Edns0Opt {
     DO: number,
     Z: undefined,
     RDLENGTH: number,
-    RDATA?: any,
+    RDATA?: any, 
 }
+
+// eslint-disable-next-line prefer-const
 export let UDPPAYLOADSIZE = 4096;
 
 const edns0Opt = {
@@ -278,8 +281,21 @@ const edns0Opt = {
 
 const Edns0OptLen = 11;
 
-export type TokenType = 's16'|'u8'|'u16'|'string'|'u32'|'string[]'|'string[*]'|string|'u3'|'u4'|'bit'|'opaque'|number;
-export type TokenVal = number|string|string[]|ArrayBuffer|undefined|DataView;
+export type TokenType =
+    's16'
+    | 'u8'
+    | 'u16'
+    | 'string'
+    | 'u32'
+    | 'string[]'
+    | 'string[*]'
+    | string
+    | 'u3'
+    | 'u4'
+    | 'bit'
+    | 'opaque'
+    | number;
+export type TokenVal = number | string | string[] | ArrayBuffer | undefined | DataView;
 export type Tokenizer = Generator<TokenVal, undefined, TokenType>;
 
 /**
@@ -412,7 +428,7 @@ export function* deserialize(data: ArrayBuffer, start: number = 0, end?: number)
                 if (typeof type === 'number') {
                     len = type * 8;
                 } else if (typeof type === 'string' && (type as string).startsWith('string[')) {
-                    len = parseInt((type as string).substring(7, (type as string).length-1), 10);
+                    len = parseInt((type as string).substring(7, (type as string).length - 1), 10);
                     val = String.fromCodePoint(...new Uint8Array(data.slice(byteOffset + start, byteOffset + start + len)));
                     len *= 8;
                 } else throw Error('Unknown token type');
@@ -421,6 +437,7 @@ export function* deserialize(data: ArrayBuffer, start: number = 0, end?: number)
     yield val;
     return;
 }
+
 // TODO implement https://tools.ietf.org/html/rfc1035#section-2.3.4
 // TODO support truncated responses
 
@@ -442,100 +459,108 @@ export function* serialize(data: ArrayBuffer): Generator<number, undefined, [Tok
     const view = new DataView(data);
     let len = 0;
     let bigval;
+
     for (let bitOffset = 0; bitOffset < view.byteLength * 8; bitOffset += len) {
         len = 0;
         let byteOffset = Math.trunc(bitOffset / 8);
         const [type, val] = yield byteOffset;
-        switch (type) {  // TODO replace with Symbols
-            case 's16':
-                if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
-                view.setInt16(byteOffset, val);
-                // Currently all s16 values are byte aligned, no shifting required
-                len = 16;
-                break;
-            case 'u8':
-                if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
-                view.setUint8(byteOffset, val);
-                // Currently all u8 values are byte aligned, no shifting required
-                len = 8;
-                break;
-            case 'u16':
-                if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
-                view.setUint16(byteOffset, val);
-                // Currently all u16 values are byte aligned, no shifting required
-                len = 16;
-                break;
-            case 'u32':
-                if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
-                view.setUint32(byteOffset, val);
-                // Currently all u32 values are byte aligned, no shifting required
-                len = 32;
-                break;
-            case 'u3':
-                // Only used by header Z field, no-op
-                len = 3;
-                break;
-            case 'u15':
-                // Used by OPT Z field, no-op
-                len = 15;
-                break;
-            case 'u2':
-                if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
-                bigval = view.getUint16(byteOffset);
-                bigval |= val << (13 - (bitOffset % 8));
-                view.setUint16(byteOffset, bigval);
-                len = 2;
-                break;
-            case 'u4':
-                if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
-                bigval = view.getUint16(byteOffset);
-                bigval |= val << (11 - (bitOffset % 8));
-                view.setUint16(byteOffset, bigval);
-                len = 4;
-                break;
-            case 'bit':
-                if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
-                let byte = view.getUint8(byteOffset);
-                byte |= val << (7 - (bitOffset % 8));
-                view.setUint8(byteOffset, byte);
-                len = 1;
-                break;
-            case 'string[*]': // Write remainder of data as string
-                if (typeof val !== 'string') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
-                if (val.length < view.byteLength - byteOffset) {
-                    for (; len < val.length; ++len) {
-                        view.setUint8(byteOffset + len, val.charCodeAt(len));
+        try {
+            switch (type) {  // TODO replace with Symbols
+                case 's16':
+                    if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
+                    // Currently all s16 values are byte aligned, no shifting required
+                    len = 16;
+                    view.setInt16(byteOffset, val);
+                    break;
+                case 'u8':
+                    if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
+                    // Currently all u8 values are byte aligned, no shifting required
+                    len = 8;
+                    view.setUint8(byteOffset, val);
+                    break;
+                case 'u16':
+                    if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
+                    // Currently all u16 values are byte aligned, no shifting required
+                    len = 16;
+                    view.setUint16(byteOffset, val);
+                    break;
+                case 'u32':
+                    if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
+                    // Currently all u32 values are byte aligned, no shifting required
+                    len = 32;
+                    view.setUint32(byteOffset, val);
+                    break;
+                case 'u3':
+                    // Only used by header Z field, no-op
+                    len = 3;
+                    break;
+                case 'u15':
+                    // Used by OPT Z field, no-op
+                    len = 15;
+                    break;
+                case 'u2':
+                    if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
+                    bigval = view.getUint16(byteOffset);
+                    bigval |= val << (13 - (bitOffset % 8));
+                    len = 2;
+                    view.setUint16(byteOffset, bigval);
+                    break;
+                case 'u4':
+                    if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
+                    bigval = view.getUint16(byteOffset);
+                    bigval |= val << (11 - (bitOffset % 8));
+                    len = 4;
+                    view.setUint16(byteOffset, bigval);
+                    break;
+                case 'bit':
+                    if (typeof val !== 'number') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
+                    let byte = view.getUint8(byteOffset);
+                    byte |= val << (7 - (bitOffset % 8));
+                    len = 1;
+                    view.setUint8(byteOffset, byte);
+                    break;
+                case 'string[*]': // Write remainder of data as string
+                    if (typeof val !== 'string') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
+                    if (val.length < view.byteLength - byteOffset) {
+                        for (; len < val.length; ++len) {
+                            view.setUint8(byteOffset + len, val.charCodeAt(len));
+                        }
                     }
-                }
-                return;
-            case 'string': // Length prefixed string
-                if (typeof val !== 'string') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
-                setString(new DataView(data, byteOffset, val.length+1), val);
-                len = (val.length + 1) * 8;
-                break;
-            case 'string[]': // Array of length prefixed strings, zero terminated or until end of data
-                if (!Array.isArray(val)) throw Error(`Token value mismatch ${type} vs ${typeof val}`);
-                for (const str of val) {
-                    if (typeof str !== 'string') throw Error(`Token value mismatch 'string' vs ${typeof str}`);
-                    setString(new DataView(data, byteOffset, str.length+1), str);
-                    byteOffset += str.length + 1;
-                    len += (str.length + 1) * 8;
-                }
-                if (val[val.length-1].length !== 0) { // Zero terminate if last element of val not empty
-                    view.setUint8(byteOffset, 0);
-                    len += 8;
-                }
-                break;
-            case 'opaque':
-                if (val instanceof Uint8Array) {
-                    val.forEach((v, i)=>view.setUint8(byteOffset + i, v));
-                    len += val.length * 8;
-                } else {
-                    throw new TypeError("opaque value must be Uint8Array");
-                }
-                break;
-            default:
-                throw Error(`Unknown token type: ${type}`);
+                    return;
+                case 'string': // Length prefixed string
+                    if (typeof val !== 'string') throw Error(`Token value mismatch ${type} vs ${typeof val}`);
+                    len = (val.length + 1) * 8;
+                    setString(new DataView(data, byteOffset, val.length + 1), val);
+                    break;
+                case 'string[]': // Array of length prefixed strings, zero terminated or until end of data
+                    if (!Array.isArray(val)) throw Error(`Token value mismatch ${type} vs ${typeof val}`);
+                    for (const str of val) {
+                        if (typeof str !== 'string') throw Error(`Token value mismatch 'string' vs ${typeof str}`);
+                        len += (str.length + 1) * 8;
+                        setString(new DataView(data, byteOffset, str.length + 1), str);
+                        byteOffset += str.length + 1;
+                    }
+                    if (val[val.length - 1].length !== 0) { // Zero terminate if last element of val not empty
+                        len += 8;
+                        view.setUint8(byteOffset, 0);
+                    }
+                    break;
+                case 'opaque':
+                    if (val instanceof ArrayBuffer) {
+                        len += val.byteLength * 8;
+                        new Uint8Array(val).forEach((v, i) => view.setUint8(byteOffset + i, v));
+                    } else {
+                        throw new TypeError("opaque value must be Uint8Array");
+                    }
+                    break;
+                default:
+                    throw Error(`Unknown token type: ${type}`);
+            }
+        } catch (e) {
+            if (e instanceof RangeError) {
+                throw new RangeError(`Buffer overflow, tried to write ${len}b/${len / 8}B at offset ${bitOffset}b/${byteOffset}B with ${view.byteLength - byteOffset}B remaining`, {cause: e});
+            }
+            throw e;
         }
     }
     return;
@@ -552,16 +577,34 @@ export function buildRequest(questions: Question[], recursive: boolean = true, d
     let totalLen = HeaderLen;
     if (dnssec) {
         totalLen += Edns0OptLen;
-        additional.push({NAME: [''], TYPE: RecordType.OPT, UDPPAYLOADSIZE, VERSION: 0, ERCODE: 0, DO: 1, RDLENGTH: 0, Z: undefined} as Edns0Opt as unknown as AdditionalRecord<RecordType.OPT>)
+        additional.push({
+            NAME: [''],
+            TYPE: RecordType.OPT,
+            UDPPAYLOADSIZE,
+            VERSION: 0,
+            ERCODE: 0,
+            DO: 1,
+            RDLENGTH: 0,
+            Z: undefined
+        } as Edns0Opt as unknown as AdditionalRecord<RecordType.OPT>)
     }
 
     totalLen += (questions.length * 4) // Bytes for QTYPE+QCLASS
-    + questions.reduce((acc, q)=>acc + domainNameLen(q.QNAME), 0); // Bytes required for QNAMEs
+        + questions.reduce((acc, q) => acc + domainNameLen(q.QNAME), 0); // Bytes required for QNAMEs
 
     const buf = new ArrayBuffer(totalLen);
     const encoder = serialize(buf);
     encoder.next();
-    const head = {ID: 0, QR: 0, Opcode: 0, AA: 0, TC: 0, RD: recursive ? 1 : 0, QDCOUNT: questions.length, ARCOUNT: dnssec?1:0} as Header;
+    const head = {
+        ID: 0,
+        QR: 0,
+        Opcode: 0,
+        AA: 0,
+        TC: 0,
+        RD: recursive ? 1 : 0,
+        QDCOUNT: questions.length,
+        ARCOUNT: dnssec ? 1 : 0
+    } as Header;
     for (const [token, type] of Object.entries(header) as [keyof Header, TokenType][]) encoder.next([type, head[token] || 0]);
     for (const q of questions) {
         for (const [token, type] of Object.entries(question) as [keyof Question, TokenType][]) encoder.next([type, q[token]]);
@@ -610,7 +653,7 @@ export function parseResponse(data: ArrayBuffer, keepRDATA: boolean = false): DN
     }
 
     // answer, authority, additional
-    for (const [count, category] of [[response.header.ANCOUNT, response.answer], [response.header.NSCOUNT, response.authority], [response.header.ARCOUNT, response.additional]]) {
+    for (const [count, category] of [[response.header.ANCOUNT, response.answer], [response.header.NSCOUNT, response.authority], [response.header.ARCOUNT, response.additional]] as [number, ResponseRecord<any>[]][]) {
         for (let i = 0; i < count; ++i) {
             const r: ResponseRecord<keyof RDATATypes> | Edns0Opt = {} as ResponseRecord<keyof RDATATypes>;
             let tokens = Object.entries(record);
@@ -646,23 +689,27 @@ export function parseResponse(data: ArrayBuffer, keepRDATA: boolean = false): DN
     return response;
 }
 
-// tslint:disable-next-line:max-classes-per-file
+// eslint-disable-next-line:max-classes-per-file
 export abstract class WireFormatResolver extends BaseResolver {
     private _pending: Set<AbortController> = new Set();
+
     abstract _submit(server: string, request: ArrayBuffer, keepRDATA: boolean, abortSignal: AbortSignal): Promise<[DNSResponse, ArrayBuffer]>;
 
-    protected _url(server: string,  payload: string) {
+    protected _url(server: string, payload: string) {
         return `https://${server}/dns-query?dns=${payload}`;
     }
 
-    resolve(hostname: string | {hostname: string, rrtype: (keyof typeof RecordType)}[], rrtype?: (keyof typeof RecordType) | "ANY" | ResolveOptions, options?: ResolveOptions): Promise<any | any[]> {
+    resolve(hostname: string | {
+        hostname: string,
+        rrtype: (keyof typeof RecordType)
+    }[], rrtype?: (keyof typeof RecordType) | "ANY" | ResolveOptions, options?: ResolveOptions): Promise<any | any[]> {
         let questions: Question[];
         if (!Array.isArray(hostname)) {
             if (rrtype === "ANY") rrtype = "*";
             else if (rrtype === undefined) rrtype = 'A';
             questions = [new Question(hostname.split('.'), RecordType[rrtype as keyof typeof RecordType])];
         } else {
-            questions = hostname.map(q=>new Question(q.hostname.split('.'), RecordType[q.rrtype as keyof typeof RecordType]));
+            questions = hostname.map(q => new Question(q.hostname.split('.'), RecordType[q.rrtype as keyof typeof RecordType]));
         }
         const request = buildRequest(questions, undefined, options && options.dnssec);
 
@@ -673,7 +720,7 @@ export abstract class WireFormatResolver extends BaseResolver {
         const controller = new AbortController();
         this._pending.add(controller);
 
-        return (async ()=>{
+        return (async () => {
             // Retry request with timeout
             let id;
             success: for (let _try = this._tries; _try > 0; --_try) {
@@ -700,7 +747,7 @@ export abstract class WireFormatResolver extends BaseResolver {
                     try {
                         let rawData: ArrayBuffer;
                         [response, rawData] = await this._submit(server, request, options && options.dnssec, controller.signal);
-                        // tslint:disable-next-line:no-console
+                        // eslint-disable-next-line:no-console
                         console.log(`"${rrtype}": "${base64url_encode(rawData)}"`);
                         if (response.question) { // verify questions
                             if (response.question.length !== questions.length) throw new Error('DNS query in response does not match original query');
@@ -731,18 +778,19 @@ export abstract class WireFormatResolver extends BaseResolver {
 
                         break success;
                     } catch (e) {
-                        // tslint:disable-next-line:no-console
+                        let error = e;
+                        // eslint-disable-next-line:no-console
                         console.error(e);
                         if (e.name === 'AbortError') {
-                            if (timeout) e = DNSError.TIMEOUT;
-                            else e = DNSError.CANCELLED;
+                            if (timeout) error = DNSError.TIMEOUT;
+                            else error = DNSError.CANCELLED;
                         }
                         // TODO translate e to DNSErrors
-                        switch (e.name) {
+                        switch (error.name) {
                             case '':
 
                         }
-                        errors.push(e);
+                        errors.push(error);
                         if (_try > 0) continue;
                     }
                 }

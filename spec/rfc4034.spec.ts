@@ -1,5 +1,5 @@
 // Hijack fetch to inject IANA response into getRootDS
-import {restoreFetch, setFetch} from "./common";
+import {restoreFetch, setFetch} from "./common.js";
 
 import {
     canonicalSortLabels,
@@ -8,18 +8,19 @@ import {
     signedData,
     validateKSK,
     validateRecords,
-    verifyRRSIG
+    verifyRRSIG,
+    clearCaches, isSameOrSubDomain,
 } from '../src/rfc4034.js'
-import {ALGORITHMS, DIGESTS, RecordType} from "../src/constants";
-import {RDATA} from "../src/rfc_rdata";
-import {AnswerRecord, CLASS, DNSResponse, Question, ResponseRecord} from "../src/rfc1035";
-import {BaseResolver} from "../src/base_resolver";
+import {ALGORITHMS, DIGESTS, RecordType} from "../src/constants.js";
+import {RDATA} from "../src/rfc_rdata.js";
+import {AnswerRecord, CLASS, DNSResponse, Question, ResponseRecord} from "../src/rfc1035.js";
+import {BaseResolver} from "../src/base_resolver.js";
 import {ResolveOptions} from '../src/dns.js';
+import { expect, assert, use as chaiUse } from "chai";
+import chaiAsPromised from 'chai-as-promised';
+chaiUse(chaiAsPromised);
 
-// tslint:disable:no-unused-expression
-
-const expect = chai.expect;
-const assert = chai.assert;
+// eslint-disable:no-unused-expression
 
 describe('RFC4034 DNSSEC', () => {
     describe('label count', () => {
@@ -27,6 +28,34 @@ describe('RFC4034 DNSSEC', () => {
         it('should not count wildcards', () => expect(labelCount(['*', 'example', 'i2labs', 'ca', ''])).to.eql(3))
         it('should not count the root', () => expect(labelCount([''])).to.eql(0))
         it('should handle a TLD', () => expect(labelCount(['ca', ''])).to.eql(1))
+    })
+
+    describe('determine if domain is subdomain or equal', () => {
+        it('should handle the domains being equal', () => {
+            expect(isSameOrSubDomain(['example', 'com', ''], ['example', 'com', ''])).to.be.true;
+        })
+        it('should handle the domain being a subdomain', () => {
+            expect(isSameOrSubDomain(['sub', 'example', 'com', ''], ['example', 'com', ''])).to.be.true;
+            expect(isSameOrSubDomain(['dub', 'sub', 'example', 'com', ''], ['example', 'com', ''])).to.be.true;
+        })
+        it('should handle the zone being a subdomain', () => {
+            expect(isSameOrSubDomain(['example', 'com', ''], ['sub', 'example', 'com', ''])).to.be.false;
+            expect(isSameOrSubDomain(['example', 'com', ''], ['dub', 'sub', 'example', 'com', ''])).to.be.false;
+        })
+        it('should reject the domains being different', () => {
+            expect(isSameOrSubDomain(['example', 'com', ''], ['example', 'ca', ''])).to.be.false;
+            expect(isSameOrSubDomain(['example', 'ca', ''], ['example', 'com', ''])).to.be.false;
+        })
+        it('should reject the zone being a substring of the lowest level domain', () => {
+            expect(isSameOrSubDomain(['aexample', 'com', ''], ['example', 'com', ''])).to.be.false;
+        })
+        it('should not modify the arguments', ()=>{
+            const op1 = ['example', 'com', ''];
+            const op2 = ['example', 'com', ''];
+            expect(isSameOrSubDomain(op1, op2)).to.be.true;
+            expect(op1, 'argument 1 modified').to.deep.eq(['example', 'com', '']);
+            expect(op2, 'argument 2 modified').to.deep.eq(['example', 'com', '']);
+        })
     })
 
     describe('canonical sorting of labels', () => {
@@ -58,7 +87,7 @@ describe('RFC4034 DNSSEC', () => {
 
     describe('DNSKEY import', () => {
         it('should error for unknown algorithms', () => {
-            expect(importDNSKEY({
+            return expect(importDNSKEY({
                 zone_key: true,
                 secure_entry_point: false,
                 protocol: 255,
@@ -85,7 +114,7 @@ describe('RFC4034 DNSSEC', () => {
             expect(key.algorithm.name).to.eq('RSASSA-PKCS1-v1_5');
             expect(key.type).to.eq('public');
             expect(key.usages).to.include('verify');
-            expect(crypto.subtle.verify(ALGORITHMS[5], key, Uint8Array.from(atob('VfKcn15agCUifHL6pne6b4dajLAjzI99oml/Ddr2v/VFhIHY8e8Nq6+4i84EIvjd9GhyR7cnqgPE8RErLvNDzHDdL92yzyBZzojEfuYru1P5mHxN+unYqwY9s52dAQi2JItcdosN3p6By3jbEt2eYnWpa4D4EDmIpKqaFEf7sMEY5Z0jbDtByPcyWTWoqhYRih0h6HRh1ootKgDhDAt0PHP/JJxO2wdfFUM34alb8+uXNi0Mk53MMdCgpZBrYbPYGH9oxAQeXiZxrTvjv2RkE4Br3rUoUwpmEw3bgEXOCBS7jGSvnGtlewYEvchWs+I/kmVa6GDpduyGdVlT/Uar9w=='), c => c.charCodeAt(0)), Uint8Array.from("helloworld", c => c.charCodeAt(0)))).to.eventually.be.true;
+            return expect(crypto.subtle.verify(ALGORITHMS[5], key, Uint8Array.from(atob('VfKcn15agCUifHL6pne6b4dajLAjzI99oml/Ddr2v/VFhIHY8e8Nq6+4i84EIvjd9GhyR7cnqgPE8RErLvNDzHDdL92yzyBZzojEfuYru1P5mHxN+unYqwY9s52dAQi2JItcdosN3p6By3jbEt2eYnWpa4D4EDmIpKqaFEf7sMEY5Z0jbDtByPcyWTWoqhYRih0h6HRh1ootKgDhDAt0PHP/JJxO2wdfFUM34alb8+uXNi0Mk53MMdCgpZBrYbPYGH9oxAQeXiZxrTvjv2RkE4Br3rUoUwpmEw3bgEXOCBS7jGSvnGtlewYEvchWs+I/kmVa6GDpduyGdVlT/Uar9w=='), c => c.charCodeAt(0)), Uint8Array.from("helloworld", c => c.charCodeAt(0)))).to.eventually.be.true;
         })
         it('should handle RSASSA-PKCS1-v1_5 SHA-1 NSEC3', async () => {
             // Generate test data via `dnssec-keygen -a NSEC3RSASHA1 -b 4096 -n ZONE example.com` and paste in hash
@@ -120,7 +149,7 @@ describe('RFC4034 DNSSEC', () => {
             expect(key.algorithm.name).to.eq('RSASSA-PKCS1-v1_5');
             expect(key.type).to.eq('public');
             expect(key.usages).to.include('verify');
-            expect(crypto.subtle.verify(ALGORITHMS[8], key, Uint8Array.from(atob('VfKcn15agCUifHL6pne6b4dajLAjzI99oml/Ddr2v/VFhIHY8e8Nq6+4i84EIvjd9GhyR7cnqgPE8RErLvNDzHDdL92yzyBZzojEfuYru1P5mHxN+unYqwY9s52dAQi2JItcdosN3p6By3jbEt2eYnWpa4D4EDmIpKqaFEf7sMEY5Z0jbDtByPcyWTWoqhYRih0h6HRh1ootKgDhDAt0PHP/JJxO2wdfFUM34alb8+uXNi0Mk53MMdCgpZBrYbPYGH9oxAQeXiZxrTvjv2RkE4Br3rUoUwpmEw3bgEXOCBS7jGSvnGtlewYEvchWs+I/kmVa6GDpduyGdVlT/Uar9w=='), c => c.charCodeAt(0)), Uint8Array.from("helloworld", c => c.charCodeAt(0)))).to.eventually.be.true;
+            return expect(crypto.subtle.verify(ALGORITHMS[8], key, Uint8Array.from(atob('VfKcn15agCUifHL6pne6b4dajLAjzI99oml/Ddr2v/VFhIHY8e8Nq6+4i84EIvjd9GhyR7cnqgPE8RErLvNDzHDdL92yzyBZzojEfuYru1P5mHxN+unYqwY9s52dAQi2JItcdosN3p6By3jbEt2eYnWpa4D4EDmIpKqaFEf7sMEY5Z0jbDtByPcyWTWoqhYRih0h6HRh1ootKgDhDAt0PHP/JJxO2wdfFUM34alb8+uXNi0Mk53MMdCgpZBrYbPYGH9oxAQeXiZxrTvjv2RkE4Br3rUoUwpmEw3bgEXOCBS7jGSvnGtlewYEvchWs+I/kmVa6GDpduyGdVlT/Uar9w=='), c => c.charCodeAt(0)), Uint8Array.from("helloworld", c => c.charCodeAt(0)))).to.eventually.be.true;
         })
         it('should handle RSASSA-PKCS1-v1_5 SHA-512', async () => {
             // openssl genrsa -out key.pem 4096
@@ -139,7 +168,7 @@ describe('RFC4034 DNSSEC', () => {
             expect(key.algorithm.name).to.eq('RSASSA-PKCS1-v1_5');
             expect(key.type).to.eq('public');
             expect(key.usages).to.include('verify');
-            expect(crypto.subtle.verify(ALGORITHMS[10], key, Uint8Array.from(atob('VfKcn15agCUifHL6pne6b4dajLAjzI99oml/Ddr2v/VFhIHY8e8Nq6+4i84EIvjd9GhyR7cnqgPE8RErLvNDzHDdL92yzyBZzojEfuYru1P5mHxN+unYqwY9s52dAQi2JItcdosN3p6By3jbEt2eYnWpa4D4EDmIpKqaFEf7sMEY5Z0jbDtByPcyWTWoqhYRih0h6HRh1ootKgDhDAt0PHP/JJxO2wdfFUM34alb8+uXNi0Mk53MMdCgpZBrYbPYGH9oxAQeXiZxrTvjv2RkE4Br3rUoUwpmEw3bgEXOCBS7jGSvnGtlewYEvchWs+I/kmVa6GDpduyGdVlT/Uar9w=='), c => c.charCodeAt(0)), Uint8Array.from("helloworld", c => c.charCodeAt(0)))).to.eventually.be.true;
+            return expect(crypto.subtle.verify(ALGORITHMS[10], key, Uint8Array.from(atob('VfKcn15agCUifHL6pne6b4dajLAjzI99oml/Ddr2v/VFhIHY8e8Nq6+4i84EIvjd9GhyR7cnqgPE8RErLvNDzHDdL92yzyBZzojEfuYru1P5mHxN+unYqwY9s52dAQi2JItcdosN3p6By3jbEt2eYnWpa4D4EDmIpKqaFEf7sMEY5Z0jbDtByPcyWTWoqhYRih0h6HRh1ootKgDhDAt0PHP/JJxO2wdfFUM34alb8+uXNi0Mk53MMdCgpZBrYbPYGH9oxAQeXiZxrTvjv2RkE4Br3rUoUwpmEw3bgEXOCBS7jGSvnGtlewYEvchWs+I/kmVa6GDpduyGdVlT/Uar9w=='), c => c.charCodeAt(0)), Uint8Array.from("helloworld", c => c.charCodeAt(0)))).to.eventually.be.true;
         })
         it('should handle ECDSA P-256 SHA-256', async () => {
             // openssl ecparam -genkey -name prime256v1 -out key.pem
@@ -158,7 +187,7 @@ describe('RFC4034 DNSSEC', () => {
             expect(key.algorithm.name).to.eq('ECDSA');
             expect(key.type).to.eq('public');
             expect(key.usages).to.include('verify');
-            expect(crypto.subtle.verify(ALGORITHMS[13], key, Uint8Array.from(atob('MEQCIGjLQEwPMUgMG7Yymw46LHOUAd1PpqBgSZGg7ywlPHxkAiAOhX68D9R23vqT+rS5kCCtmtBiVyMki9a9/T8UxzdswQ=='), c => c.charCodeAt(0)), Uint8Array.from("helloworld", c => c.charCodeAt(0)))).to.eventually.be.true;
+            return expect(crypto.subtle.verify(ALGORITHMS[13], key, Uint8Array.from(atob('MEQCIGjLQEwPMUgMG7Yymw46LHOUAd1PpqBgSZGg7ywlPHxkAiAOhX68D9R23vqT+rS5kCCtmtBiVyMki9a9/T8UxzdswQ=='), c => c.charCodeAt(0)), Uint8Array.from("helloworld", c => c.charCodeAt(0)))).to.eventually.be.true;
         })
         it('should handle ECDSA SHA-384', async () => {
             // openssl ecparam -genkey -name secp384r1 -out key.pem
@@ -178,11 +207,11 @@ describe('RFC4034 DNSSEC', () => {
             expect(key.algorithm.name).to.eq('ECDSA');
             expect(key.type).to.eq('public');
             expect(key.usages).to.include('verify');
-            expect(crypto.subtle.verify(ALGORITHMS[13], key, Uint8Array.from(atob('MGUCMGxQxrmUA2vcyKd8mo6hYYXcLZZJikZkcLx6jvOcB5MX4HFrLW2EpRJC4/pCchLEQgIxAJK8IM++WoT2QU74Lg+FtpoRUZBAm04gE4jVSDu8YHIPcQQj7oT5hQ3eeOQWYz8nHA=='), c => c.charCodeAt(0)), Uint8Array.from("helloworld", c => c.charCodeAt(0)))).to.eventually.be.true;
+            return expect(crypto.subtle.verify(ALGORITHMS[13], key, Uint8Array.from(atob('MGUCMGxQxrmUA2vcyKd8mo6hYYXcLZZJikZkcLx6jvOcB5MX4HFrLW2EpRJC4/pCchLEQgIxAJK8IM++WoT2QU74Lg+FtpoRUZBAm04gE4jVSDu8YHIPcQQj7oT5hQ3eeOQWYz8nHA=='), c => c.charCodeAt(0)), Uint8Array.from("helloworld", c => c.charCodeAt(0)))).to.eventually.be.true;
         })
     })
 
-    describe('DNSKEY signed data serialization', () => {
+    describe('RRSIG signed data serialization', () => {
         it('should handle a base case', () => {
             expect(new Uint8Array(signedData({
                 type_covered: RecordType.A,
@@ -264,6 +293,29 @@ describe('RFC4034 DNSSEC', () => {
                 0, 0, 0, 1,                         // TTL
                 0, 4, 0, 1, 2, 3                    // RDLEN, RDATA
             ]).reduce((acc, cur) => acc + cur.toString(10).padStart(3, ' ') + ' ', ''))
+        })
+        it('should handle the signer missing the null terminator', () => {
+            expect(() => signedData({
+                type_covered: RecordType.A,
+                algorithm: 0,
+                labels: 2,
+                original_ttl: 1,
+                sig_expiration: 0,
+                sig_inception: 0,
+                key_tag: 0,
+                signer: ['AUTHORITY', 'ORG'],
+                signature: undefined
+            }, [
+                {
+                    NAME: ['example', 'com', ''],
+                    TYPE: RecordType.A,
+                    CLASS: CLASS.IN,
+                    TTL: 1,
+                    RDLENGTH: 4,
+                    RDATA: [0, 1, 2, 3],
+                    raw_rdata: Uint8Array.from([0, 1, 2, 3]).buffer
+                } as ResponseRecord<RecordType.A>
+            ])).to.throw('Signer not well formed');
         })
         it('should handle the rrset being out of order', () => {
             expect(new Uint8Array(signedData({
@@ -522,8 +574,8 @@ describe('RFC4034 DNSSEC', () => {
                 0, 4, 0, 1, 2, 3                    // RDLEN, RDATA
             ]).reduce((acc, cur) => acc + cur.toString(10).padStart(3, ' ') + ' ', ''))
         })
-        it('should handle a RRSets with less labels than the RRSIG labels field', () => {
-            expect(() => new Uint8Array(signedData({
+        it('should handle RRSets with less labels than the RRSIG labels field', () => {
+            expect(() => signedData({
                 type_covered: RecordType.A,
                 algorithm: 0,
                 labels: 2,
@@ -543,7 +595,39 @@ describe('RFC4034 DNSSEC', () => {
                     RDATA: [0, 1, 2, 3],
                     raw_rdata: Uint8Array.from([0, 1, 2, 3]).buffer
                 } as ResponseRecord<RecordType.A>
-            ]))).to.throw;
+            ])).to.throw('higher level domain');
+        })
+        it('should reject RRSets that dont match the RRSIG type covered', () => {
+            expect(() => signedData({
+                type_covered: RecordType.A,
+                algorithm: 0,
+                labels: 2,
+                original_ttl: 1,
+                sig_expiration: 0,
+                sig_inception: 0,
+                key_tag: 0,
+                signer: ['authority', 'org', ''],
+                signature: undefined
+            }, [
+                {
+                    NAME: ['example', 'com', ''],
+                    TYPE: RecordType.A,
+                    CLASS: CLASS.IN,
+                    TTL: 1,
+                    RDLENGTH: 4,
+                    RDATA: [0, 1, 2, 3],
+                    raw_rdata: Uint8Array.from([0, 1, 2, 3]).buffer
+                } as ResponseRecord<RecordType.A>,
+                {
+                    NAME: ['example', 'com', ''],
+                    TYPE: RecordType.CNAME,
+                    CLASS: CLASS.IN,
+                    TTL: 1,
+                    RDLENGTH: 4,
+                    RDATA: ['foo', 'bar', ''],
+                    raw_rdata: Uint8Array.from([3, 102, 111, 111, 3, 10, 98, 97, 114, 0]).buffer
+                } as ResponseRecord<RecordType.CNAME>
+            ])).to.throw('does not match the RRSIG type covered');
         })
         xit('should handle a CNAME RRSet with uppercase names in their RDATA') // TODO
     })
@@ -591,7 +675,7 @@ describe('RFC4034 DNSSEC', () => {
             expect(await verifyRRSIG([key.publicKey, key.publicKey], rrsigData, rrset)).to.be.true;
         })
         it('should handle an unexpected algorithm', async () => {
-            expect(verifyRRSIG([key.publicKey], {
+            return expect(verifyRRSIG([key.publicKey], {
                 ...rrsigData,
                 algorithm: 0
             }, rrset)).to.eventually.be.rejectedWith("unsupported algorithm");
@@ -604,7 +688,7 @@ describe('RFC4034 DNSSEC', () => {
         })
     })
 
-    // tslint:disable-next-line:no-empty
+    // eslint-disable-next-line:no-empty
     async function fakeRootTrustAnchor(fetchCallback = () => {
     }, algorithm = 13) {
         const key = await (crypto.subtle.generateKey(ALGORITHMS[algorithm], true, ["verify", "sign"]) as Promise<CryptoKeyPair>);
@@ -681,44 +765,72 @@ ${Array.from(new Uint8Array(await crypto.subtle.digest(DIGESTS[2], Uint8Array.fr
             rrtype: (keyof typeof RecordType)
         }[], rrtype?: (keyof typeof RecordType) | "ANY" | ResolveOptions, options?: ResolveOptions): Promise<any> {
             this.called += 1;
-            expect(rrtype).to.eq("DS");
+            expect(rrtype).to.be.oneOf(["DS", "DNSKEY"]);
             expect(options.dnssec, 'DNSSEC must be enabled').to.be.true;
             expect(options.raw, 'Raw response expected').to.be.true;
             expect(typeof hostname, 'hostname is not a string').to.eq('string');
-            const trimmedHostname = (hostname as string).replace(/\.$/, '');
+            const trimmedHostname = (hostname as string).replace(/\.$/, '').toLowerCase();
             expect(this.pubkeys).to.haveOwnProperty(trimmedHostname);
             if (this.expectedHostname) expect(hostname, 'unexpected hostname when requesting DS for KSK').to.eq(this.expectedHostname);
-            // digest = digest_algorithm( DNSKEY owner name | DNSKEY RDATA);
-            // DNSKEY RDATA = Flags | Protocol | Algorithm | Public Key.  "|" denotes concatenation
-            const digestData = [
-                ...trimmedHostname.split('.').flatMap(s => [s.length, ...Uint8Array.from(s, c => c.charCodeAt(0))]),
-                0,                                   // ''
-                256,                                 // flags
-                3,                                   // protocol
-                13,                                  // algorithm
-                ...new Uint8Array(this.pubkeys[trimmedHostname]),
-            ];
-            const rdata = {
-                key_tag: 0,
-                algorithm: 13,
-                digest_type: 2,
-                digest: await crypto.subtle.digest(DIGESTS[2], Uint8Array.from(digestData).buffer),
-            } as RDATA[RecordType.DS];
-            return this.responseCallback({
-                header: {},
-                question: [{} as Question],
-                answer: [{
-                    NAME: [...trimmedHostname.split('.'), ''],
-                    TYPE: RecordType.DS,
-                    CLASS: CLASS.IN,
-                    TTL: this.ttl,
-                    RDATA: rdata,
-                    RDLENGTH: 4 + rdata.digest.byteLength,
-                    raw_rdata: Uint8Array.from([0, rdata.key_tag, rdata.algorithm, rdata.digest_type, ...new Uint8Array(rdata.digest)]).buffer
-                } as AnswerRecord<RecordType.DS>],
-                additional: [],
-                authority: [],
-            } as DNSResponse);
+            switch (rrtype) {
+                case "DS":
+
+
+                    // digest = digest_algorithm( DNSKEY owner name | DNSKEY RDATA);
+                    // DNSKEY RDATA = Flags | Protocol | Algorithm | Public Key.  "|" denotes concatenation
+                    const digestData = [
+                        ...trimmedHostname.split('.').flatMap(s => [s.length, ...Uint8Array.from(s, c => c.charCodeAt(0))]),
+                        0,                                   // ''
+                        256,                                 // flags
+                        3,                                   // protocol
+                        13,                                  // algorithm
+                        ...new Uint8Array(this.pubkeys[trimmedHostname]),
+                    ];
+                    const rdata = {
+                        key_tag: 0,
+                        algorithm: 13,
+                        digest_type: 2,
+                        digest: await crypto.subtle.digest(DIGESTS[2], Uint8Array.from(digestData).buffer),
+                    } as RDATA[RecordType.DS];
+                    return this.responseCallback({
+                        header: {},
+                        question: [{} as Question],
+                        answer: [{
+                            NAME: [...trimmedHostname.split('.'), ''],
+                            TYPE: RecordType.DS,
+                            CLASS: CLASS.IN,
+                            TTL: this.ttl,
+                            RDATA: rdata,
+                            RDLENGTH: 4 + rdata.digest.byteLength,
+                            raw_rdata: Uint8Array.from([0, rdata.key_tag, rdata.algorithm, rdata.digest_type, ...new Uint8Array(rdata.digest)]).buffer
+                        } as AnswerRecord<RecordType.DS>],
+                        additional: [],
+                        authority: [],
+                    } as DNSResponse);
+                case "DNSKEY":
+                    return this.responseCallback({
+                        header: {},
+                        question: [{} as Question],
+                        answer: [{
+                            NAME: [...trimmedHostname.split('.'), ''],
+                            TYPE: RecordType.DNSKEY,
+                            CLASS: CLASS.IN,
+                            TTL: this.ttl,
+                            RDATA: {
+                                key_tag: 0,
+                                algorithm: 13,
+                                protocol: 3,
+                                zone_key: true,
+                                secure_entry_point: false,
+                                public_key: this.pubkeys[trimmedHostname],
+                            },
+                            RDLENGTH: 4 + this.pubkeys[trimmedHostname].byteLength,
+                            raw_rdata: Uint8Array.from([256, 3, 13, ...new Uint8Array(this.pubkeys[trimmedHostname])]).buffer
+                        } as AnswerRecord<RecordType.DNSKEY>],
+                        additional: [],
+                        authority: [],
+                    } as DNSResponse);
+            }
         }
 
         protected servers: string[];
@@ -732,11 +844,11 @@ ${Array.from(new Uint8Array(await crypto.subtle.digest(DIGESTS[2], Uint8Array.fr
             CLASS: CLASS.IN,
             TTL: 0,
             TYPE: RecordType.DNSKEY,
-            RDLENGTH: 0,
+            RDLENGTH: 3,
             RDATA: {
-                algorithm: 0,
+                algorithm: 13,
                 key_tag: 0,
-                protocol: 0,
+                protocol: 3,
                 public_key: undefined,
                 secure_entry_point: false,
                 zone_key: true
@@ -815,6 +927,7 @@ AwEAAa96jeuknZlaeSrvyAJj6ZHv28hhOKkx3rLGXVaC6rXTsDc449/cidltpkyGwCJNnOAlFNKF2jBo
 </TrustAnchor>`;
         let fakeKSK: Record<string, AnswerRecord<RecordType.DNSKEY>>;
         beforeEach('set up resolver and test KSK', async () => {
+            clearCaches();
             resolver = await FakeResolver.build(['com', 'example.com']);
             fakeKSK = Object.fromEntries(Object.entries(resolver.pubkeys).map(([k, v]) => [k, {
                 NAME: [...(k + '.').split('.')],
@@ -855,7 +968,7 @@ AwEAAa96jeuknZlaeSrvyAJj6ZHv28hhOKkx3rLGXVaC6rXTsDc449/cidltpkyGwCJNnOAlFNKF2jBo
             expect(called, 'fetch not called').to.be.true;
         })
         it('should ensure only zone keys are validated', () => {
-            expect(validateKSK({
+            return expect(validateKSK({
                 ...dummyRootKSK,
                 RDATA: {...dummyRootKSK.RDATA, zone_key: false}
             }, resolver)).to.eventually.be.false;
@@ -909,7 +1022,7 @@ AwEAAa96jeuknZlaeSrvyAJj6ZHv28hhOKkx3rLGXVaC6rXTsDc449/cidltpkyGwCJNnOAlFNKF2jBo
             expect(called, 'fetch not called').to.be.false;
         })
         it('should handle the KSK raw_rdata not being populated', () => {
-            expect(validateKSK({
+            return expect(validateKSK({
                 ...dummyRootKSK,
                 raw_rdata: undefined
             }, resolver)).to.eventually.be.rejectedWith('raw_rdata');
@@ -961,7 +1074,7 @@ AwEAAa96jeuknZlaeSrvyAJj6ZHv28hhOKkx3rLGXVaC6rXTsDc449/cidltpkyGwCJNnOAlFNKF2jBo
                     expect(url).to.eq("https://data.iana.org/root-anchors/root-anchors.xml");
                     return new Response(`<TrustAnchor><Zone>ca.</Zone></TrustAnchor>`);
                 });
-                expect(validateKSK(dummyRootKSK, resolver), 'KSK invalid').to.eventually.be.rejectedWith('Unexpected zone');
+                await expect(validateKSK(dummyRootKSK, resolver), 'KSK invalid').to.eventually.be.rejectedWith('Unexpected zone');
                 expect(called, 'fetch not called').to.be.true;
             })
             it('should handle invalid IANA response', async () => {
@@ -971,7 +1084,7 @@ AwEAAa96jeuknZlaeSrvyAJj6ZHv28hhOKkx3rLGXVaC6rXTsDc449/cidltpkyGwCJNnOAlFNKF2jBo
                     expect(url).to.eq("https://data.iana.org/root-anchors/root-anchors.xml");
                     return new Response('test');
                 });
-                expect(validateKSK(dummyRootKSK, resolver), 'KSK invalid').to.eventually.be.rejectedWith('Unable to parse');
+                await expect(validateKSK(dummyRootKSK, resolver), 'KSK invalid').to.eventually.be.rejectedWith('Unable to parse');
                 expect(called, 'fetch not called').to.be.true;
             })
             it('should cache ROOT digests', async () => {
@@ -1007,14 +1120,20 @@ AwEAAa96jeuknZlaeSrvyAJj6ZHv28hhOKkx3rLGXVaC6rXTsDc449/cidltpkyGwCJNnOAlFNKF2jBo
 
     describe('validate RRSet against RRSIG', () => {
         let resolver: FakeResolver;
-        beforeEach('set up resolver', async () => {
+        let ARecord: ResponseRecord<RecordType.A>;
+        let DNSKEYRecord: ResponseRecord<RecordType.DNSKEY>;
+        let ZONEKEY: ResponseRecord<RecordType.DNSKEY>;
+        let CNAMERecord: ResponseRecord<RecordType.CNAME>;
+        let TXTRecord: ResponseRecord<RecordType.TXT>;
+        let ARRSIG: ResponseRecord<RecordType.RRSIG>;
+        let CNAMERRSIG: ResponseRecord<RecordType.RRSIG>;
+        let TXTRRSIG: ResponseRecord<RecordType.RRSIG>;
+        let DNSKEYRRSIG: ResponseRecord<RecordType.RRSIG>;
+        beforeEach('set up', async () => {
+            clearCaches();
             resolver = await FakeResolver.build(['com', 'example.com', 'sub.example.com', 'subexample.com']);
-        })
-        it('should handle empty RRSet', async () => {
-            expect(validateRecords([], resolver)).to.eventually.rejectedWith('Unable to validate');
-        })
-        it('should handle a variety of record types', async () => {
-            const ARecord = {
+
+            ARecord = {
                 NAME: ['example', 'com', ''],
                 TYPE: RecordType.A,
                 CLASS: CLASS.IN,
@@ -1023,7 +1142,25 @@ AwEAAa96jeuknZlaeSrvyAJj6ZHv28hhOKkx3rLGXVaC6rXTsDc449/cidltpkyGwCJNnOAlFNKF2jBo
                 raw_rdata: Uint8Array.from([0, 1, 2, 3]).buffer,
                 RDLENGTH: 4,
             };
-            const DNSKEY = {
+            CNAMERecord = {
+                NAME: ['example', 'com', ''],
+                TYPE: RecordType.CNAME,
+                CLASS: CLASS.IN,
+                TTL: 10,
+                RDATA: ['foo', 'bar', ''],
+                raw_rdata: Uint8Array.from([3, 102, 111, 111, 3, 10, 98, 97, 114, 0]).buffer,
+                RDLENGTH: 10,
+            };
+            TXTRecord = {
+                NAME: ['example', 'com', ''],
+                TYPE: RecordType.TXT,
+                CLASS: CLASS.IN,
+                TTL: 10,
+                RDATA: ['foo', 'bar', ''],
+                raw_rdata: Uint8Array.from([3, 102, 111, 111, 3, 10, 98, 97, 114, 0]).buffer,
+                RDLENGTH: 10,
+            };
+            ZONEKEY = {
                 NAME: ['example', 'com', ''],
                 TYPE: RecordType.DNSKEY,
                 CLASS: CLASS.IN,
@@ -1044,7 +1181,28 @@ AwEAAa96jeuknZlaeSrvyAJj6ZHv28hhOKkx3rLGXVaC6rXTsDc449/cidltpkyGwCJNnOAlFNKF2jBo
                     ...new Uint8Array(resolver.pubkeys['example.com'])
                 ]).buffer,
             };
-            const RRSIG = {
+            DNSKEYRecord = {
+                NAME: ['example', 'com', ''],
+                TYPE: RecordType.DNSKEY,
+                CLASS: CLASS.IN,
+                TTL: 10,
+                RDATA: {
+                    key_tag: 1,
+                    protocol: 3,
+                    zone_key: false,
+                    algorithm: 13,
+                    public_key: resolver.pubkeys['example.com'],
+                    secure_entry_point: false,
+                } as RDATA[RecordType.DNSKEY],
+                RDLENGTH: 4 + resolver.pubkeys['example.com'].byteLength,
+                raw_rdata: Uint8Array.from([
+                    256,                                 // flags
+                    3,                                   // protocol
+                    13,                                  // algorithm
+                    ...new Uint8Array(resolver.pubkeys['example.com'])
+                ]).buffer,
+            };
+            ARRSIG = {
                 NAME: ['example', 'com', ''],
                 TYPE: RecordType.RRSIG,
                 CLASS: CLASS.IN,
@@ -1055,21 +1213,88 @@ AwEAAa96jeuknZlaeSrvyAJj6ZHv28hhOKkx3rLGXVaC6rXTsDc449/cidltpkyGwCJNnOAlFNKF2jBo
                     algorithm: 13,
                     original_ttl: 10,
                     type_covered: RecordType.A,
-                    signer: ['example', 'com'],
-                    sig_expiration: Date.now() + 10000,
-                    sig_inception: Date.now() - 10000,
+                    signer: ['example', 'com', ''],
+                    sig_expiration: Math.floor(Date.now() / 1000) + 10,
+                    sig_inception: Math.floor(Date.now() / 1000) - 10,
                 } as RDATA[RecordType.RRSIG],
             } as ResponseRecord<RecordType.RRSIG>;
-            RRSIG.RDATA.signature = await crypto.subtle.sign(ALGORITHMS[13], resolver.keys['example.com'].privateKey, signedData(RRSIG.RDATA, [ARecord, DNSKEY]));
-            expect(validateRecords([ARecord, DNSKEY, RRSIG], resolver)).to.eventually.be.true;
+            CNAMERRSIG = {
+                NAME: ['example', 'com', ''],
+                TYPE: RecordType.RRSIG,
+                CLASS: CLASS.IN,
+                TTL: 10,
+                RDATA: {
+                    key_tag: 0,
+                    labels: 2,
+                    algorithm: 13,
+                    original_ttl: 10,
+                    type_covered: RecordType.CNAME,
+                    signer: ['example', 'com', ''],
+                    sig_expiration: Math.floor(Date.now() / 1000) + 10,
+                    sig_inception: Math.floor(Date.now() / 1000) - 10,
+                } as RDATA[RecordType.RRSIG],
+            } as ResponseRecord<RecordType.RRSIG>;
+            TXTRRSIG = {
+                NAME: ['example', 'com', ''],
+                TYPE: RecordType.RRSIG,
+                CLASS: CLASS.IN,
+                TTL: 10,
+                RDATA: {
+                    key_tag: 0,
+                    labels: 2,
+                    algorithm: 13,
+                    original_ttl: 10,
+                    type_covered: RecordType.TXT,
+                    signer: ['example', 'com', ''],
+                    sig_expiration: Math.floor(Date.now() / 1000) + 10,
+                    sig_inception: Math.floor(Date.now() / 1000) - 10,
+                } as RDATA[RecordType.RRSIG],
+            } as ResponseRecord<RecordType.RRSIG>;
+            DNSKEYRRSIG = {
+                NAME: ['example', 'com', ''],
+                TYPE: RecordType.RRSIG,
+                CLASS: CLASS.IN,
+                TTL: 10,
+                RDATA: {
+                    key_tag: 0,
+                    labels: 2,
+                    algorithm: 13,
+                    original_ttl: 10,
+                    type_covered: RecordType.DNSKEY,
+                    signer: ['example', 'com', ''],
+                    sig_expiration: Math.floor(Date.now() / 1000) + 10,
+                    sig_inception: Math.floor(Date.now() / 1000) - 10,
+                } as RDATA[RecordType.RRSIG],
+            } as ResponseRecord<RecordType.RRSIG>;
+            ARRSIG.RDATA.signature = await crypto.subtle.sign(ALGORITHMS[13], resolver.keys['example.com'].privateKey, signedData(ARRSIG.RDATA, [ARecord]));
+            CNAMERRSIG.RDATA.signature = await crypto.subtle.sign(ALGORITHMS[13], resolver.keys['example.com'].privateKey, signedData(CNAMERRSIG.RDATA, [CNAMERecord]));
+            TXTRRSIG.RDATA.signature = await crypto.subtle.sign(ALGORITHMS[13], resolver.keys['example.com'].privateKey, signedData(TXTRRSIG.RDATA, [TXTRecord]));
+            DNSKEYRRSIG.RDATA.signature = await crypto.subtle.sign(ALGORITHMS[13], resolver.keys['example.com'].privateKey, signedData(DNSKEYRRSIG.RDATA, [DNSKEYRecord]));
         })
-        it('should correctly match the RRSIG to the RRSubset', async () => {
+        it('should handle empty RRSet', () => {
+            return expect(validateRecords([], resolver)).to.eventually.rejectedWith('Unable to validate');
         })
-        it('should correctly handle combinations of a.foo.bar and afoo.bar for RRSIG signer', async () => {
+        it('should handle a variety of record types', () => {
+            return expect(validateRecords([ARecord, CNAMERecord, TXTRecord, DNSKEYRecord, ARRSIG, CNAMERRSIG, TXTRRSIG, DNSKEYRRSIG, ZONEKEY], resolver)).to.eventually.be.true;
         })
-        it('should correctly reject invalid records', async () => {
+        it('should reject when a RRSig exists for a type covered but there are no records in the RRSet of that type', () => {
+            return expect(validateRecords([CNAMERecord, TXTRecord, DNSKEYRecord, ARRSIG, CNAMERRSIG, TXTRRSIG, DNSKEYRRSIG, ZONEKEY], resolver)).to.eventually.be.true;
         })
-        it('should correctly reject expired RRSIG', async () => {
+        xit('should reject when records are present in the RRSet that are not signed by an RRSIG', () => {
+            return expect(validateRecords([ARecord, CNAMERecord, TXTRecord, DNSKEYRecord, ARRSIG, CNAMERRSIG, TXTRRSIG, DNSKEYRRSIG, ZONEKEY], resolver)).to.eventually.be.rejected;
+        })
+        xit('should reject an incomplete RRSet type for what was signed by a single RRSIG', () => {
+            return expect(validateRecords([ARecord, CNAMERecord, TXTRecord, DNSKEYRecord, ARRSIG, CNAMERRSIG, TXTRRSIG, DNSKEYRRSIG, ZONEKEY], resolver)).to.eventually.be.rejected;
+        })
+        xit('should handle a mix of DNSKEY zone keys and non-zone keys', async () => {
+        })
+        xit('should correctly match the RRSIG to the RRSubset', async () => {
+        })
+        xit('should correctly handle combinations of a.foo.bar and afoo.bar for RRSIG signer', async () => {
+        })
+        xit('should correctly reject invalid records', async () => {
+        })
+        xit('should correctly reject expired RRSIG', async () => {
         })
     })
 // TODO https://github.com/jhnns/rewire

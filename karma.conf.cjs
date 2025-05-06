@@ -10,13 +10,17 @@ module.exports = (config) => {
 
     // frameworks to use
     // available frameworks: https://www.npmjs.com/search?q=keywords:karma-adapter
-    frameworks: ['mocha', 'chai-as-promised', 'chai', 'karma-typescript'],
+    frameworks: ['mocha', 'karma-typescript'],
 
 
     // list of files / patterns to load in the browser
     files: [
-      'spec/*.ts',
-      'src/*.ts'
+      {pattern: 'node_modules/chai/*.js', included: false, watched: false},
+      {pattern: 'node_modules/chai-as-promised/lib/*.js', included: false, watched: false},
+      {pattern: 'node_modules/check-error/*.js', included: false, watched: false},
+      {pattern: 'spec/importmap.js', type: 'js'},
+      {pattern: 'spec/*.ts', type: 'module'},
+      {pattern: 'src/*.ts', type: 'module', included: false},
     ],
 
 
@@ -37,7 +41,13 @@ module.exports = (config) => {
 
     karmaTypescriptConfig: {
       "compilerOptions": {
-        "target": "ES2021",
+        "target": "ES2023",
+        "module": "ES2023",
+        "paths": { // This is solely to stop a bug with @types/node as of 12/15/2023
+          "undici-types": [
+            "./node_modules/undici-types/index.d.ts"
+          ]
+        }
       }
     },
 
@@ -75,6 +85,6 @@ module.exports = (config) => {
 
     // Concurrency level
     // how many browser instances should be started simultaneously
-    concurrency: Infinity
+    concurrency: Infinity,
   })
 }

@@ -1,8 +1,8 @@
 import * as constants from "./constants.js";
 import {ErrorCode, RecordType} from "./constants.js";
-import {DNSResponse} from "./rfc1035";
+import {DNSResponse} from "./rfc1035.js";
 
-export type DNSRecord = {}
+export type DNSRecord = object;
 
 export interface AnyDNSRecord {
     type: string;
@@ -208,7 +208,7 @@ export interface PromiseResolver {
     resolve(hostname: string, rrtype: "SRV", options?: ResolveOptions & {raw: false}): Promise<SRVRecord[]>;
     resolve(hostname: string, rrtype: "TXT", options?: ResolveOptions & {raw: false}): Promise<string[][]>;
     resolve(hostname: string, rrtype?: "A"|"AAAA"|"CNAME"|"NS"|"PTR", options?: ResolveOptions & {raw: false}): Promise<string[]>;
-    resolve(hostname: string, rrtype: keyof typeof RecordType, options: ResolveOptions & {raw: true}): Promise<any>;
+    resolve(hostname: string, rrtype: keyof typeof RecordType, options: ResolveOptions & {raw: true}): Promise<any>; 
     resolve(hostname: string, rrtype: "A", options: ResolveOptions & {ttl:true, raw: false}): Promise<ARecord[]>;
     resolve(hostname: string, rrtype: "AAAA", options: ResolveOptions & {ttl:true, raw: false}): Promise<AAAARecord[]>;
 

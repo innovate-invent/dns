@@ -1,8 +1,8 @@
-import resolve from '@rollup/plugin-node-resolve';
-import commonjs from '@rollup/plugin-commonjs';
-import typescript from '@rollup/plugin-typescript';
-import sourceMaps from 'rollup-plugin-sourcemaps';
-import path from 'path';
+const resolve = require('@rollup/plugin-node-resolve');
+const commonjs = require('@rollup/plugin-commonjs');
+const typescript = require('@rollup/plugin-typescript');
+//const sourceMaps = require('rollup-plugin-sourcemaps');
+const path = require('path');
 
 
 const packageJson = require('./package.json');
@@ -11,7 +11,7 @@ const globals = {
     ...packageJson.devDependencies
 };
 
-export default {
+module.exports = {
     input: 'src/index.ts',
     output: [
         {
@@ -51,7 +51,7 @@ export default {
         }),
         commonjs(),
         resolve(),
-        sourceMaps(),
+        //sourceMaps(),
     ],
     external: Object.keys(globals)
 };

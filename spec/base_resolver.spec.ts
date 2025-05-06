@@ -1,8 +1,8 @@
 import {BaseResolver} from "../src/base_resolver.js";
 import {DNSError, ResolveOptions} from "../src/dns.js";
-import {RecordType} from "../src/constants";
+import {RecordType} from "../src/constants.js";
+import { expect, assert } from "chai";
 
-const expect = chai.expect;
 
 class FakeResolver extends BaseResolver {
     protected servers: string[];

@@ -13,11 +13,12 @@ import {RecordType} from "./constants.js";
 
 export type BaseResolverOptions = { timeout?: number, tries?: number };
 
-// tslint:disable-next-line no-empty-interface
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type, @typescript-eslint/no-unsafe-declaration-merging
 export interface BaseResolver extends PromiseResolver {
     // Allows partial implementation of PromiseResolver in abstract class using declaration merging
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export abstract class BaseResolver implements PromiseResolver {
     protected readonly _timeout: number = -1;
     protected readonly _tries: number = 4;
@@ -38,6 +39,7 @@ export abstract class BaseResolver implements PromiseResolver {
 
     abstract cancel(): void;
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     setLocalAddress(ipv4: string, ipv6: string): void {
         // no-op
     }
@@ -51,10 +53,11 @@ export abstract class BaseResolver implements PromiseResolver {
         this.servers = servers;
     }
 
+    
     abstract resolve(hostname: string, rrtype?: (keyof typeof RecordType) | 'ANY', options?: ResolveOptions): Promise<any>;
     abstract resolve(questions: { hostname: string, rrtype: (keyof typeof RecordType) }[], options?: ResolveOptions & {
         raw: true
-    }): Promise<any[]>;
+    }): Promise<any[]>; 
 
     resolve4(hostname: string, options: { ttl: true }): Promise<ARecord[]>;
     resolve4(hostname: string, options?: { ttl: false }): Promise<string[]>;
@@ -108,6 +111,7 @@ export abstract class BaseResolver implements PromiseResolver {
         return this.resolve(hostname, 'TXT');
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     reverse(hostname: string): Promise<string[]> {
         throw DNSError.NOTIMP;
     }

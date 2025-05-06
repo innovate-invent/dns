@@ -13,7 +13,7 @@ import {
 } from './dns.js'
 import RFCResolver from './rfc8484.js'
 import * as constants from './constants.js'
-import {BaseResolver, BaseResolverOptions} from "./base_resolver";
+import {BaseResolver, BaseResolverOptions} from "./base_resolver.js";
 
 /**
  * Wrapper around Promise based Resolver implementations to support callback interface.
@@ -41,6 +41,7 @@ class CallbackResolver implements Resolver {
         return this._resolver.getServers();
     }
 
+    
     resolve(hostname: string, ...args: any[]): void {
         const callback = args.pop();
         this._resolver.resolve(hostname, args[0]).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
@@ -49,7 +50,7 @@ class CallbackResolver implements Resolver {
     resolve4(hostname: string, callback: (err?: DNSError, address?: string[]) => void): void;
     resolve4(hostname: string, options: { ttl: true }, callback: (err?: DNSError, address?: ARecord[]) => void): void;
     resolve4(hostname: string, options: { ttl: false }, callback: (err?: DNSError, address?: string[]) => void): void;
-    resolve4(hostname: string, ...args: any[]): void {
+    resolve4(hostname: string, ...args: any[]): void { 
         const callback = args.pop();
         this._resolver.resolve4(hostname, args[0]).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
@@ -57,7 +58,7 @@ class CallbackResolver implements Resolver {
     resolve6(hostname: string, callback: (err?: DNSError, address?: string[]) => void): void;
     resolve6(hostname: string, options: { ttl: true }, callback: (err?: DNSError, address?: AAAARecord[]) => void): void;
     resolve6(hostname: string, options: { ttl: false }, callback: (err?: DNSError, address?: string[]) => void): void;
-    resolve6(hostname: string, ...args: any[]): void {
+    resolve6(hostname: string, ...args: any[]): void { 
         const callback = args.pop();
         this._resolver.resolve6(hostname, args[0]).then(v=>callback(undefined, v)).catch(e=>callback(e, undefined));
     }
@@ -122,7 +123,7 @@ type LookupResult = { address: string, family: number };
 
 function lookupPromise(hostname: string, options?: 4 | 6 | { family: 4 | 6 | 0, hints?: number, all?: false, verbatim?: boolean }): Promise<LookupResult>;
 function lookupPromise(hostname: string, options: { family: 4 | 6 | 0, hints?: number, all: true, verbatim?: boolean }): Promise<LookupResult[]>;
-function lookupPromise(hostname: string, ...args: any[]): Promise<LookupResult | LookupResult[]> {
+function lookupPromise(hostname: string, ...args: any[]): Promise<LookupResult | LookupResult[]> { 
     const options = args[0];
     let family: number = options as number || 4;
     let hints = 0; // Ignored, not supported
@@ -130,9 +131,9 @@ function lookupPromise(hostname: string, ...args: any[]): Promise<LookupResult |
     let verbatim = false; // Ignored, always false
     if (typeof options === 'object') {
         family = options.family || family;
-        hints = options.hints || hints;
+        hints = options.hints || hints; // eslint-disable-line @typescript-eslint/no-unused-vars
         all = options.all || all;
-        verbatim = options.verbatim || verbatim;
+        verbatim = options.verbatim || verbatim; // eslint-disable-line @typescript-eslint/no-unused-vars
     }
     let promise = Promise.resolve([]);
     if (family === 6 || family === 0) {
@@ -149,13 +150,14 @@ function lookupPromise(hostname: string, ...args: any[]): Promise<LookupResult |
     });
 }
 
+ // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function lookupServicePromise(address: string, port: number): Promise<{hostname: string, service: string}> {
     throw DNSError.NOTIMP;
 }
 
 function lookup(hostname: string, callback: LookupCallback): void;
 function lookup(hostname: string, options: 4 | 6 | { family: 4 | 6 | 0, hints?: number, all?: boolean, verbatim?: boolean }, callback: LookupCallback | LookupCallbackAll): void;
-function lookup(hostname: string, ...args: any[]): void {
+function lookup(hostname: string, ...args: any[]): void { 
     const callback = args.pop();
     lookupPromise(hostname, args[0]).then(result=>Array.isArray(result) ? callback(undefined, result) : callback(undefined, result.address, result.family)).catch(err=>callback(err));
 }

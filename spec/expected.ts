@@ -3,7 +3,7 @@
  */
 
 import {RecordType} from "../src/constants.js";
-import {ResolveOptions} from "../src/dns";
+import {ResolveOptions} from "../src/dns.js";
 
 export type Expected = {host: string, records: any[], cmp?: string[], pending?: boolean, options?: ResolveOptions, raw?: string};
 
