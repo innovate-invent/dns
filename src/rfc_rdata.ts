@@ -1,5 +1,5 @@
 import {RecordType} from "./constants.js";
-import {Tokenizer, TokenType} from "./rfc1035.js";
+import {Tokenizer, TokenType} from "./bin_util.js";
 
 // eslint-disable:no-bitwise
 

@@ -181,3 +181,45 @@ export type ErrorCode =
     | 'LOADIPHLPAPI'
     | 'ADDRGETNETWORKPARAMS'
     | 'CANCELLED';
+
+// https://www.rfc-editor.org/rfc/rfc6895.html#section-2.3
+export enum RCode {
+    NoError = 0, // No Error                           [RFC1035]
+    FormErr = 1, // Format Error                       [RFC1035]
+    ServFail = 2, // Server Failure                     [RFC1035]
+    NXDomain = 3, // Non-Existent Domain                [RFC1035]
+    NotImp = 4, // Not Implemented                    [RFC1035]
+    Refused = 5, // Query Refused                      [RFC1035]
+    YXDomain = 6, // Name Exists when it should not     [RFC2136]
+    YXRRSet = 7, // RR Set Exists when it should not   [RFC2136]
+    NXRRSet = 8, // RR Set that should exist does not  [RFC2136]
+    NotAuth = 9, // Server Not Authoritative for zone  [RFC2136]  [RFC2845]
+    NotZone = 10, // Name not contained in zone         [RFC2136]
+
+// 11 - 15 Unassigned
+
+    BADVERS = 16, // Bad OPT Version                    [RFC6891]
+    BADSIG = 16, // TSIG Signature Failure             [RFC2845]
+    BADKEY = 17, // Key not recognized                 [RFC2845]
+    BADTIME = 18, // Signature out of time window       [RFC2845]
+    BADMODE = 19, // Bad TKEY Mode                      [RFC2930]
+    BADNAME = 20, // Duplicate key name                 [RFC2930]
+    BADALG = 21, // Algorithm not supported            [RFC2930]
+    BADTRUNC = 22, // Bad Truncation                     [RFC4635]
+
+// 23 - 3,840 Unassigned
+
+// 3,841 - 4,095 Reserved for Private Use
+
+// 4,096 - 65,534 Unassigned
+
+// 65,535 Reserved can only be allocated by Standards Action.
+}
+
+// https://datatracker.ietf.org/doc/html/rfc1035#autoid-16
+export enum CLASS {
+    IN = 1,
+    CS = 2,
+    CH = 3,
+    HS = 4,
+}

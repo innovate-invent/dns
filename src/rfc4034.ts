@@ -16,14 +16,13 @@ const parseXMLFromString = DOMParser.prototype.parseFromString;
 
 import {
     AuthorityRecord,
-    CLASS,
     DNSResponse,
     Question,
     record,
     ResponseRecord,
-    serialize,
 } from "./rfc1035.js";
-import {ALGORITHMS, DIGESTS, RecordType} from "./constants.js";
+import {serialize, TokenType} from "./bin_util.js";
+import {ALGORITHMS, DIGESTS, RecordType, CLASS} from "./constants.js";
 import {_rdata, DOMAINNAME, RDATA} from "./rfc_rdata.js"
 import {BaseResolver} from "./base_resolver.js";
 import {base64url_encode} from "./base64url.js";
@@ -45,15 +44,19 @@ type CachedCryptoKeys = Expires & {
     keys: CryptoKey[], keyTags: number[],
 }
 
+type ZoneResult = {isZone: boolean, expires: number};
+
 // The following should be protected by the JS engine from any external code trying to inject values
 let ROOTDIGESTS: CachedDS = [];
 const SESSIONDSCACHE: Map<string, CachedDS> = new _Map<string, CachedDS>();
 const SESSIONKEYCACHE: Map<string, CachedCryptoKeys> = new _Map<string, CachedCryptoKeys>();
+const SESSIONZONECACHE: Map<string, ZoneResult> = new _Map<string, ZoneResult>();
 
 export function clearCaches() {
     ROOTDIGESTS = [];
     SESSIONDSCACHE.clear();
     SESSIONKEYCACHE.clear();
+    SESSIONZONECACHE.clear();
 }
 
 export class DNSSECValidationError extends Error {
@@ -240,59 +243,63 @@ export async function validateKSK(ksk: ResponseRecord<RecordType.DNSKEY>, resolv
 export async function importDNSKEY(rdata: RDATA[RecordType.DNSKEY]): Promise<CryptoKey> {
     if (!(rdata.algorithm in ALGORITHMS)) throw new Error(`Key algorithm ${rdata.algorithm} not implemented`);
     const algorithm = ALGORITHMS[rdata.algorithm];
-    switch (rdata.algorithm) {
-        case 5:
-        case 7:
-            // eslint-disable-next-line:no-console
-            console.warn('DNSKEY record uses insecure SHA1 algorithm');
-        // fallthrough
-        case 8:
-        case 10:
-            // https://datatracker.ietf.org/doc/html/rfc3110#section-2
-            const data = new DataView(rdata.public_key);
-            let eLen = data.getUint8(0);
-            let offset = 1;
-            if (eLen === 0) { // Handle two byte exponent length
-                eLen = data.getUint16(offset);
-                offset += 2;
-            }
-            const e = rdata.public_key.slice(offset, offset + eLen);  // Exponent
-            const n = rdata.public_key.slice(offset + eLen);  // Modulus
-            // https://stackoverflow.com/a/19030716
-            // https://www.rfc-editor.org/rfc/rfc3279
-            let spki;
-            // Reconstruct key data in SPKI format for import
-            // https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/importKey#subjectpublickeyinfo
-            // TODO why the extra 0 before the modulus?!
-            if (n.byteLength > 128) {
-                spki = new Uint8Array([0x30, 0x82, 0xFF, 0xFF, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00, 0x03, 0x82, 0xFF, 0xFF, 0x00, 0x30, 0x82, 0xFF, 0xFF, 0x02, 0x82, 0xFF, 0xFF, 0, ...new Uint8Array(n), 0x02, e.byteLength, ...new Uint8Array(e)]).buffer;
-                const v = new DataView(spki);
-                v.setUint16(2, v.byteLength - 4);
-                v.setUint16(21, v.byteLength - 23);
-                v.setUint16(26, v.byteLength - 28);
-                v.setUint16(30, n.byteLength + 1);
-            } else {
-                spki = new Uint8Array([0x30, 0x81, 0xFF, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00, 0x03, 0x81, 0xFF, 0x00, 0x30, 0x81, 0xFF, 0x02, 0x81, n.byteLength + 1, 0, ...new Uint8Array(n), 0x02, e.byteLength, ...new Uint8Array(e)]).buffer;
-                const v = new DataView(spki);
-                v.setUint8(2, v.byteLength - 3);
-                v.setUint8(20, v.byteLength - 21);
-                v.setUint8(24, v.byteLength - 25);
-            }
+    try {
+        switch (rdata.algorithm) {
+            case 5:
+            case 7:
+                // eslint-disable-next-line:no-console
+                console.warn('DNSKEY record uses insecure SHA1 algorithm');
+            // fallthrough
+            case 8:
+            case 10:
+                // https://datatracker.ietf.org/doc/html/rfc3110#section-2
+                const data = new DataView(rdata.public_key);
+                let eLen = data.getUint8(0);
+                let offset = 1;
+                if (eLen === 0) { // Handle two byte exponent length
+                    eLen = data.getUint16(offset);
+                    offset += 2;
+                }
+                const e = rdata.public_key.slice(offset, offset + eLen);  // Exponent
+                const n = rdata.public_key.slice(offset + eLen);  // Modulus
+                // https://stackoverflow.com/a/19030716
+                // https://www.rfc-editor.org/rfc/rfc3279
+                let spki;
+                // Reconstruct key data in SPKI format for import
+                // https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/importKey#subjectpublickeyinfo
+                // TODO why the extra 0 before the modulus?!
+                if (n.byteLength > 128) {
+                    spki = new Uint8Array([0x30, 0x82, 0xFF, 0xFF, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00, 0x03, 0x82, 0xFF, 0xFF, 0x00, 0x30, 0x82, 0xFF, 0xFF, 0x02, 0x82, 0xFF, 0xFF, 0, ...new Uint8Array(n), 0x02, e.byteLength, ...new Uint8Array(e)]).buffer;
+                    const v = new DataView(spki);
+                    v.setUint16(2, v.byteLength - 4);
+                    v.setUint16(21, v.byteLength - 23);
+                    v.setUint16(26, v.byteLength - 28);
+                    v.setUint16(30, n.byteLength + 1);
+                } else {
+                    spki = new Uint8Array([0x30, 0x81, 0xFF, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00, 0x03, 0x81, 0xFF, 0x00, 0x30, 0x81, 0xFF, 0x02, 0x81, n.byteLength + 1, 0, ...new Uint8Array(n), 0x02, e.byteLength, ...new Uint8Array(e)]).buffer;
+                    const v = new DataView(spki);
+                    v.setUint8(2, v.byteLength - 3);
+                    v.setUint8(20, v.byteLength - 21);
+                    v.setUint8(24, v.byteLength - 25);
+                }
 
-            return _importKey("spki", spki, algorithm, true, ["verify"]);
-        case 13:
-        case 14:
-            // ECDSA public key is only supported via jwk: https://github.com/diafygi/webcrypto-examples/issues/30
-            const jwk: JsonWebKey = {
-                kty: "EC",  // https://datatracker.ietf.org/doc/html/rfc7518#section-6.1
-                crv: (algorithm as EcKeyImportParams).namedCurve,
-                x: base64url_encode(rdata.public_key.slice(0, rdata.public_key.byteLength / 2)),
-                y: base64url_encode(rdata.public_key.slice(rdata.public_key.byteLength / 2)),
-                ext: true,
-            };
-            return _importKey("jwk", jwk, algorithm, true, ["verify"]);
-        default:
-            throw new Error(`Key algorithm ${rdata.algorithm} not implemented`);
+                return _importKey("spki", spki, algorithm, true, ["verify"]);
+            case 13:
+            case 14:
+                // ECDSA public key is only supported via jwk: https://github.com/diafygi/webcrypto-examples/issues/30
+                const jwk: JsonWebKey = {
+                    kty: "EC",  // https://datatracker.ietf.org/doc/html/rfc7518#section-6.1
+                    crv: (algorithm as EcKeyImportParams).namedCurve,
+                    x: base64url_encode(rdata.public_key.slice(0, rdata.public_key.byteLength / 2)),
+                    y: base64url_encode(rdata.public_key.slice(rdata.public_key.byteLength / 2)),
+                    ext: true,
+                };
+                return _importKey("jwk", jwk, algorithm, true, ["verify"]);
+            default:
+                throw new Error(`Key algorithm ${rdata.algorithm} not implemented`);
+        }
+    } catch (e) {
+        throw new Error(`Failed to import DNSKEY key_tag: ${rdata.key_tag} algorithm: ${rdata.algorithm}`, {cause: e});
     }
 }
 
@@ -311,12 +318,47 @@ export function labelCount(name: string[]): number {
 }
 
 /**
+ * Helper to determine if a domain is a zone apex
+ * @param name Domain name to query
+ * @param resolver Resolver instance used to make subsequent DNS requests to fetch SOA records
+ * @return true if the domain has an associated SOA record
+ */
+export async function isZone(name: DOMAINNAME, resolver: BaseResolver): Promise<boolean> {
+    const now = _now();
+    const domain = name.join('.');
+    const cachedzone = SESSIONZONECACHE.get(domain);
+    if (cachedzone) {
+        if (cachedzone.expires < now) SESSIONZONECACHE.delete(domain);
+        else if (cachedzone.isZone) return true;
+    }
+    const response = await resolver.resolve(name.join('.'), "SOA", {dnssec: true, raw: true, recursive: true}) as DNSResponse;
+    const zones = [
+        ...response.answer.filter((r: ResponseRecord<RecordType.SOA>)=>r.TYPE === RecordType.SOA),
+        ...response.authority.filter((r: ResponseRecord<RecordType.SOA>)=>r.TYPE === RecordType.SOA), // Recursive response can return SOA in auth section
+    ];
+    for (const zone of zones) {
+        SESSIONZONECACHE.set(zone.NAME.join('.'), {isZone: true, expires: (zone.TTL * 1000) + now});
+    }
+    return SESSIONZONECACHE.has(domain);
+}
+
+/**
  * Helper to determine if a domain is within a zone
  * @param query Subdomain to check
- * @param zone Parent domain
+ * @param zone DNS name of zone
+ * @param resolver Resolver instance used to make subsequent DNS requests to fetch SOA records
+ * @return true if the query domain belongs to the provided DNS zone
  */
-export function isSameOrSubDomain(query: DOMAINNAME, zone: DOMAINNAME): boolean {
-    return zone.toReversed().every((label, i) => label === query.at(-(i + 1)));
+export async function inZone(query: DOMAINNAME, zone: DOMAINNAME, resolver: BaseResolver): Promise<boolean> {
+    // query must be a subdomain or exactly equal
+    if (zone.every((label, i)=>label === query[i])) return true; // They are identical and must be the same zone
+    // Check that query is a decendant of zone
+    if (!zone.toReversed().every((label, i) => label === query.at(-(i + 1)))) return false;
+
+    let remaining = query.slice(0);
+    while (remaining.length > zone.length && !await isZone(remaining, resolver)) remaining = remaining.slice(1);
+    if (remaining.length !== zone.length) return false;
+    return isZone(zone, resolver);
 }
 
 /**
@@ -381,7 +423,7 @@ export function signedData(rrsigRDATA: RDATA[RecordType.RRSIG], rrset: ResponseR
 
     // https://datatracker.ietf.org/doc/html/rfc4034#section-6.2
     // RRSIG_RDATA is the wire format of the RRSIG RDATA fields with the Signature field excluded and the Signer's Name in canonical form.
-    for (const [field, type] of Object.entries(_rdata.get(RecordType.RRSIG))) {
+    for (const [field, type] of Object.entries(_rdata.get(RecordType.RRSIG) as Record<keyof RDATA[RecordType.RRSIG], TokenType>)) {
         if (field === "signer") {
             if (rrsigRDATA.signer.at(-1) !== '') throw new Error('RRSIG Signer not well formed, missing terminating empty string');
             encoder.next([type, rrsigRDATA.signer.map(v => v.toLowerCase())]);
@@ -445,6 +487,7 @@ export function signedData(rrsigRDATA: RDATA[RecordType.RRSIG], rrset: ResponseR
  * Validate array of records against included RRSIGs
  * @param records Array of ResponseRecords including accompanying RRSIG
  * @param resolver Resolver instance used to make subsequent DNS requests needed to verify response
+ * @return true if the provided records are valid relative to the included RRSIG records
  * @throws Error when some required relationship between the records, the DNSKEYs, and the RRSIGs is not met
  */
 export async function validateRecords(records: ResponseRecord<any>[], resolver: BaseResolver): Promise<boolean> {
@@ -462,6 +505,19 @@ export async function validateRecords(records: ResponseRecord<any>[], resolver: 
         return acc;
     }, new Map<string, ResponseRecord<any>[]>()).values());
 
+    // Catch possible NSEC issue early
+    const types_validating = new Set(rrsets.map(rrset=>rrset[0].TYPE));
+    if (!rrsigs.every(sig=>types_validating.has(sig.RDATA.type_covered)))
+        throw new DNSSECValidationError('RRSigs are present that cover RR types that are missing');
+
+    const SOAIncluded = rrsets.findIndex(set => set[0].CLASS === CLASS.IN && set[0].TYPE === RecordType.SOA);
+    if (SOAIncluded > 0) {
+        // Move the SOA records first (second if there are DNSKEYs) in the list so they will be cached before validating other records
+        const first = rrsets[0];
+        rrsets[0] = rrsets[SOAIncluded];
+        rrsets[SOAIncluded] = first;
+    }
+
     const keysIncluded = rrsets.findIndex(set => set[0].CLASS === CLASS.IN && set[0].TYPE === RecordType.DNSKEY && set.some((k: ResponseRecord<RecordType.DNSKEY>) => k.RDATA.zone_key));
     if (keysIncluded > 0) {
         // Move the DNSKEYs first in the list so they will be cached before validating other records
@@ -473,51 +529,50 @@ export async function validateRecords(records: ResponseRecord<any>[], resolver: 
     match: for (const rrset of rrsets) {
         const rr = rrset[0];
         // https://datatracker.ietf.org/doc/html/rfc4035#section-5.3.1
-        const rrsigMatches = rrsigs.filter(r =>
+        const rrsigMatchResults = await Promise.all(rrsigs.map(async r =>
             r.NAME.join(".") === rr.NAME.join(".") &&  // The RRSIG RR and the RRset MUST have the same owner name
             r.CLASS === rr.CLASS &&  // and the same class.
             r.RDATA.type_covered === rr.TYPE &&  // The RRSIG RR's Type Covered field MUST equal the RRset's type.
-            isSameOrSubDomain(rr.NAME, r.RDATA.signer) &&  // The RRSIG RR's Signer's Name field MUST be the name of the zone that contains the RRset.
+            await inZone(rr.NAME, r.RDATA.signer, resolver) &&  // The RRSIG RR's Signer's Name field MUST be the name of the zone that contains the RRset.
             r.RDATA.labels <= labelCount(rr.NAME) &&  // The number of labels in the RRset owner name MUST be greater than or equal to the value in the RRSIG RR's Labels field.
             r.RDATA.sig_expiration >= now &&  // The validator's notion of the current time MUST be less than or equal to the time listed in the RRSIG RR's Expiration field.
             r.RDATA.sig_inception <= now  // The validator's notion of the current time MUST be greater than or equal to the time listed in the RRSIG RR's Inception field.
-        );
+        ));
+        const rrsigMatches = rrsigs.filter((_, i)=>rrsigMatchResults[i]);
 
         if (!rrsigMatches || rrsigMatches.length === 0) throw new Error(`No matching RRSIG for ${rr.NAME.join('.')} ${RecordType[rr.TYPE]}`);
         // The RRSIG RR's Signer's Name, Algorithm, and Key Tag fields MUST match the owner name, algorithm, and key tag for some DNSKEY RR in the zone's apex DNSKEY RRset.
         // The matching DNSKEY RR MUST be present in the zone's apex DNSKEY RRset, and MUST have the Zone Flag bit (DNSKEY RDATA Flag bit 7) set.
         for (const rrsig of rrsigMatches) {
-            let keys: CryptoKey[];
             if (rr.TYPE === RecordType.DNSKEY) {
-                // Handle KSK
+                // Cache KSK
                 const ksk = rrset.find(r => r.RDATA.key_tag === rrsig.RDATA.key_tag && r.RDATA.zone_key);
-                if (ksk === undefined) throw new Error('Unable to validate DNSKEY, missing matching KSK'); // TODO if non-zone DNSKEY is at subdomain then KSK may not actually be included in response
-                // TODO are subdomains valid?
-                if (!isSameOrSubDomain(rr.NAME, rrsig.RDATA.signer)) throw new Error('Unable to validate DNSKEY, RRSIG signer mismatch');
-                if (!await validateKSK(ksk, resolver)) throw new Error('Unable to validate DNSKEY, invalid KSK');
-                // Verify rrset with KSK
-                keys = [await importDNSKEY(ksk.RDATA)];
-                // Cache for later
-                const label = rr.NAME.join('.');
-                const expires = _now() + (ksk.TTL * 1000);
-                const key_tag = (ksk.RDATA as RDATA[RecordType.DNSKEY]).key_tag;
-                if (!SESSIONKEYCACHE.has(label)) SESSIONKEYCACHE.set(label, {
-                    keys,
-                    keyTags: [key_tag],
-                    expires
-                });
-                else {
-                    const cache = SESSIONKEYCACHE.get(label);
-                    if (!cache.keyTags.includes(key_tag)) {
-                        cache.keys.push(keys[0]);
-                        cache.keyTags.push(key_tag);
-                        if (cache.expires > expires) cache.expires = expires;
+                if (ksk) {
+                    if (!await validateKSK(ksk, resolver)) throw new Error('Unable to validate KSK');
+                    // Verify rrset with KSK
+                    const keys = [await importDNSKEY(ksk.RDATA)];
+                    // Cache for later
+                    const label = rr.NAME.join('.');
+                    const expires = _now() + (ksk.TTL * 1000);
+                    const key_tag = (ksk.RDATA as RDATA[RecordType.DNSKEY]).key_tag;
+                    if (!SESSIONKEYCACHE.has(label)) {
+                        SESSIONKEYCACHE.set(label, {
+                            keys,
+                            keyTags: [key_tag],
+                            expires
+                        });
+                    } else {
+                        const cache = SESSIONKEYCACHE.get(label);
+                        if (!cache.keyTags.includes(key_tag)) {
+                            cache.keys.push(keys[0]);
+                            cache.keyTags.push(key_tag);
+                            if (cache.expires > expires) cache.expires = expires;
+                        }
                     }
                 }
-            } else {
-                // The RRSIG RR's Signer's Name, Algorithm, and Key Tag fields MUST match the owner name, algorithm, and key tag for some DNSKEY RR in the zone's apex DNSKEY RRset.
-                keys = await getKeys(rrsig.RDATA.signer, resolver, rrsig.RDATA.key_tag);
             }
+            // The RRSIG RR's Signer's Name, Algorithm, and Key Tag fields MUST match the owner name, algorithm, and key tag for some DNSKEY RR in the zone's apex DNSKEY RRset.
+            const keys = await getKeys(rrsig.RDATA.signer, resolver, rrsig.RDATA.key_tag);
             if (!keys || keys.length === 0) throw new Error('Unable to validate RRSIG, no valid signing key');
             if (await verifyRRSIG(keys, rrsig.RDATA, rrset)) continue match;
         }
@@ -533,7 +588,7 @@ export async function validateRecords(records: ResponseRecord<any>[], resolver: 
  * @param resolver Resolver instance used to make subsequent DNS requests needed to verify response
  */
 export default async function validate(response: DNSResponse, resolver: BaseResolver) {
-    if (!(await Promise.all([validateRecords(response.answer, resolver), validateRecords(response.authority, resolver), validateRecords(response.additional, resolver)])).every(x => x)) return false;
+    if (!(await Promise.all([validateRecords(response.authority, resolver), validateRecords(response.additional, resolver), validateRecords(response.answer, resolver)])).every(x => x)) return false;
 
     // After validating all rrsets, check that all Questions have non-empty responses or NSEC records
     // https://www.rfc-editor.org/rfc/rfc4035#section-5.4

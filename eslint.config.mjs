@@ -19,7 +19,8 @@ export default tseslint.config(
                     "varsIgnorePattern": "^_",
                     "ignoreRestSiblings": true
                 }
-            ]
+            ],
+            "@typescript-eslint/no-duplicate-enum-values": "off"
         }
     }
 );

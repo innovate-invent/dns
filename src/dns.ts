@@ -1,5 +1,5 @@
 import * as constants from "./constants.js";
-import {ErrorCode, RecordType} from "./constants.js";
+import {ErrorCode, RCode, RecordType} from "./constants.js";
 import {DNSResponse} from "./rfc1035.js";
 
 export type DNSRecord = object;
@@ -148,6 +148,30 @@ export class DNSError extends Error {
     static readonly LOADIPHLPAPI = new DNSError('Error loading iphlpapi.dll', constants.LOADIPHLPAPI);
     static readonly ADDRGETNETWORKPARAMS = new DNSError('Could not find GetNetworkParams function', constants.ADDRGETNETWORKPARAMS);
     static readonly CANCELLED = new DNSError('DNS query cancelled', constants.CANCELLED);
+
+    private static rcodeMapping = {
+        [RCode.FormErr]: DNSError.FORMERR,
+        [RCode.ServFail]: DNSError.SERVFAIL,
+        [RCode.NXDomain]: DNSError.NOTFOUND,
+        [RCode.NotImp]: DNSError.NOTIMP,
+        [RCode.Refused]: DNSError.REFUSED,
+        [RCode.YXDomain]: new DNSError("Name Exists when it should not", constants.CANCELLED),
+        [RCode.YXRRSet]: new DNSError("RR Set Exists when it should not", constants.CANCELLED),
+        [RCode.NXRRSet]: new DNSError("RR Set that should exist does not", constants.CANCELLED),
+        [RCode.NotAuth]: new DNSError("Not Authorized/Server Not Authoritative for zone", constants.CANCELLED),
+        [RCode.NotZone]: new DNSError("Name not contained in zone", constants.NOTFOUND),
+        [RCode.BADVERS]: new DNSError("Bad OPT Version/TSIG Signature Failure", constants.BADRESP),
+        [RCode.BADKEY]: new DNSError("Key not recognized", constants.CANCELLED),
+        [RCode.BADTIME]: new DNSError("Signature out of time window", constants.CANCELLED),
+        [RCode.BADMODE]: new DNSError("Bad TKEY Mode", constants.BADRESP),
+        [RCode.BADNAME]: new DNSError("Duplicate key name", constants.BADRESP),
+        [RCode.BADALG]: new DNSError("Algorithm not supported", constants.BADRESP),
+        [RCode.BADTRUNC]: new DNSError("Bad Truncation", constants.BADRESP),
+    };
+
+    static fromRCode(code: Exclude<RCode, RCode.NoError>) {
+        return this.rcodeMapping[code];
+    }
 }
 
 export type LookupCallback = (err?: DNSError, address?: string, family?: number) => void;
@@ -191,7 +215,12 @@ export interface Resolver {
     reverse(hostname: string, callback: (err?: DNSError, hostnames?: string[]) => void): void;
 }
 
-export type ResolveOptions = {ttl?:boolean, raw?: boolean, dnssec?: boolean};
+export type ResolveOptions = {
+    recursive?: boolean
+    ttl?:boolean
+    raw?: boolean
+    dnssec?: boolean
+};
 
 export interface PromiseResolver {
     // constructor(options?: { timeout: number }): Resolver;
