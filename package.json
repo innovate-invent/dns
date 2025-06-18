@@ -36,6 +36,7 @@
     "start": "CHROME_BIN=chromium TARGET=test karma start karma.conf.cjs",
     "lint": "eslint src/*.ts",
     "clean": "rm -rf dist",
+    "pretest": "./build_zonemaster.sh",
     "test:compat": "ts-mocha -p tsconfig.node.json spec/nodejs.spec.ts",
     "test": "karma start --single-run --browsers ChromeHeadless karma.conf.cjs",
     "test:node": "node --test --require ts-node/esm spec/rfc7766.spec.ts",

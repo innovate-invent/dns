@@ -5,7 +5,7 @@ import {
     canonicalSortLabels,
     clearCaches,
     importDNSKEY,
-    isZone,
+    isZoneApex,
     inZone,
     labelCount,
     signedData,
@@ -13,13 +13,14 @@ import {
     validateRecords,
     verifyRRSIG,
 } from '../src/rfc4034.js'
-import {ALGORITHMS, DIGESTS, RecordType} from "../src/constants.js";
+import {ALGORITHMS, DIGESTS, RecordType, CLASS} from "../src/constants.js";
 import {RDATA} from "../src/rfc_rdata.js";
-import {AnswerRecord, CLASS, DNSResponse, Question, ResponseRecord} from "../src/rfc1035.js";
+import {AnswerRecord, DNSResponse, Question, ResponseRecord} from "../src/rfc1035.js";
 import {BaseResolver} from "../src/base_resolver.js";
 import {ResolveOptions} from '../src/dns.js';
 import {assert, expect, use as chaiUse} from "chai";
 import chaiAsPromised from 'chai-as-promised';
+import FakeResolver from "./FakeResolver.js";
 
 chaiUse(chaiAsPromised);
 
@@ -76,123 +77,6 @@ ${Array.from(new Uint8Array(await crypto.subtle.digest(DIGESTS[2], Uint8Array.fr
     } as ResponseRecord<RecordType.DNSKEY>;
 }
 
-class FakeResolver extends BaseResolver {
-    public keys: Record<string, CryptoKeyPair>;
-    public pubkeys: Record<string, ArrayBuffer>;
-    public ttl = 10;
-    public called = 0;
-    public expectedHostname?: string = undefined;
-    public zones?: string[];
-    public responseCallback = (response: DNSResponse) => response;
-
-    public static async build(domains: string[], algorithm: number = 13) {
-        const resolver = new this();
-        resolver.zones = domains;
-        const keys = await Promise.all(domains.map(domain => crypto.subtle.generateKey(ALGORITHMS[algorithm], true, ["verify", "sign"]) as Promise<CryptoKeyPair>));
-        resolver.keys = Object.fromEntries(domains.map((domain, i) => [domain, keys[i]]));
-        const pubkeysData = await Promise.all(Object.values(keys).map(async (v) => {
-            const k = await crypto.subtle.exportKey('raw', v.publicKey);
-            if (k.byteLength % 2 === 1) return k.slice(1); // trim undocumented byte from beginning. Modulus?
-            return k;
-        }));
-        resolver.pubkeys = Object.fromEntries(pubkeysData.map((v, i) => [domains[i], v]));
-        return resolver;
-    }
-
-    cancel(): void {
-        throw new Error('Method not implemented.');
-    }
-
-    async resolve(hostname: string | {
-        hostname: string,
-        rrtype: (keyof typeof RecordType)
-    }[], rrtype?: (keyof typeof RecordType) | "ANY" | ResolveOptions, options?: ResolveOptions): Promise<any> {
-        this.called += 1;
-        expect(rrtype).to.be.oneOf(["DS", "DNSKEY", "SOA"]);
-        expect(options.dnssec, 'DNSSEC must be enabled').to.be.true;
-        expect(options.raw, 'Raw response expected').to.be.true;
-        expect(typeof hostname, 'hostname is not a string').to.eq('string');
-        const trimmedHostname = (hostname as string).replace(/\.$/, '').toLowerCase();
-        expect(this.pubkeys).to.haveOwnProperty(trimmedHostname);
-        if (this.expectedHostname) expect(hostname, 'unexpected hostname when requesting DS for KSK').to.eq(this.expectedHostname);
-        switch (rrtype) {
-            case "DS":
-                // digest = digest_algorithm( DNSKEY owner name | DNSKEY RDATA);
-                // DNSKEY RDATA = Flags | Protocol | Algorithm | Public Key.  "|" denotes concatenation
-                const digestData = [
-                    ...trimmedHostname.split('.').flatMap(s => [s.length, ...Uint8Array.from(s, c => c.charCodeAt(0))]),
-                    0,                                   // ''
-                    256,                                 // flags
-                    3,                                   // protocol
-                    13,                                  // algorithm
-                    ...new Uint8Array(this.pubkeys[trimmedHostname]),
-                ];
-                const rdata = {
-                    key_tag: 0,
-                    algorithm: 13,
-                    digest_type: 2,
-                    digest: await crypto.subtle.digest(DIGESTS[2], Uint8Array.from(digestData).buffer),
-                } as RDATA[RecordType.DS];
-                return this.responseCallback({
-                    header: {},
-                    question: [{} as Question],
-                    answer: [{
-                        NAME: [...trimmedHostname.split('.'), ''],
-                        TYPE: RecordType.DS,
-                        CLASS: CLASS.IN,
-                        TTL: this.ttl,
-                        RDATA: rdata,
-                        RDLENGTH: 4 + rdata.digest.byteLength,
-                        raw_rdata: Uint8Array.from([0, rdata.key_tag, rdata.algorithm, rdata.digest_type, ...new Uint8Array(rdata.digest)]).buffer
-                    } as AnswerRecord<RecordType.DS>],
-                    additional: [],
-                    authority: [],
-                } as DNSResponse);
-            case "DNSKEY":
-                return this.responseCallback({
-                    header: {},
-                    question: [{} as Question],
-                    answer: [{
-                        NAME: [...trimmedHostname.split('.'), ''],
-                        TYPE: RecordType.DNSKEY,
-                        CLASS: CLASS.IN,
-                        TTL: this.ttl,
-                        RDATA: {
-                            key_tag: 0,
-                            algorithm: 13,
-                            protocol: 3,
-                            zone_key: true,
-                            secure_entry_point: false,
-                            public_key: this.pubkeys[trimmedHostname],
-                        },
-                        RDLENGTH: 4 + this.pubkeys[trimmedHostname].byteLength,
-                        raw_rdata: Uint8Array.from([256, 3, 13, ...new Uint8Array(this.pubkeys[trimmedHostname])]).buffer
-                    } as AnswerRecord<RecordType.DNSKEY>],
-                    additional: [],
-                    authority: [],
-                } as DNSResponse);
-            case "SOA":
-                return this.responseCallback({
-                    header: {},
-                    question: [{} as Question],
-                    answer: [{
-                        NAME: [...trimmedHostname.split('.'), ''],
-                        TYPE: RecordType.SOA,
-                        CLASS: CLASS.IN,
-                        TTL: this.ttl,
-                        RDATA: {},
-                        RDLENGTH: 0,
-                        raw_rdata: undefined,
-                    } as AnswerRecord<RecordType.SOA>],
-                    additional: [],
-                    authority: [],
-                } as DNSResponse)
-        }
-    }
-
-    protected servers: string[];
-}
-
 describe('RFC4034 DNSSEC', () => {
     describe('label count', () => {
         it('should handle a basic case of example.i2labs.ca', () => expect(labelCount(['example', 'i2labs', 'ca', ''])).to.eql(3))
@@ -208,10 +92,10 @@ describe('RFC4034 DNSSEC', () => {
             resolver = await FakeResolver.build(['com', 'example.com']);
         })
         it('should handle the domain being an apex', () => {
-            return expect(isZone(['example', 'com', ''], resolver)).to.eventually.be.true;
+            return expect(isZoneApex(['example', 'com', ''], resolver)).to.eventually.be.true;
         })
         it('should handle the domain being a subdomain', () => {
-            return expect(isZone(['sub', 'example', 'com', ''], resolver)).to.eventually.be.false;
+            return expect(isZoneApex(['sub', 'example', 'com', ''], resolver)).to.eventually.be.false;
         })
         //todo
     })
@@ -1388,7 +1272,9 @@ AwEAAa96jeuknZlaeSrvyAJj6ZHv28hhOKkx3rLGXVaC6rXTsDc449/cidltpkyGwCJNnOAlFNKF2jBo
             return expect(validateRecords([ARecord, ARRSIG], resolver)).to.eventually.rejectedWith('No matching RRSIG');
         })
     })
-// TODO https://github.com/jhnns/rewire
+
+    // TODO test responses for queries across multiple zones and make sure the code can handle mixed zone data and doesnt assume it is all the same zone
+    //      It looks like most servers don't support multiple questions in a query, returning an error or only responding to the first question.
 
 // TODO https://dnssec.works/  https://dnssec-works.translate.goog/?_x_tr_sl=auto&_x_tr_tl=en&_x_tr_hl=en-US&_x_tr_pto=wapp
 

@@ -10,8 +10,12 @@ import {
     SRVRecord
 } from "./dns.js";
 import {RecordType} from "./constants.js";
+import {DOMAINNAME, RDATA} from "./rfc_rdata.js";
 
-export type BaseResolverOptions = { timeout?: number, tries?: number };
+export type BaseResolverOptions = {
+    timeout?: number,  // Timeout in milliseconds for a request
+    tries?: number,  // Number of retries for failed requests
+};
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type, @typescript-eslint/no-unsafe-declaration-merging
 export interface BaseResolver extends PromiseResolver {
@@ -23,6 +27,7 @@ export abstract class BaseResolver implements PromiseResolver {
     protected readonly _timeout: number = -1;
     protected readonly _tries: number = 4;
     protected abstract servers: string[];
+    protected readonly dsOverrides = new Map<string, RDATA[RecordType.DS][]>();
 
     constructor(options?: BaseResolverOptions) {
         if (!options) return;
@@ -53,6 +58,18 @@ export abstract class BaseResolver implements PromiseResolver {
         this.servers = servers;
     }
 
+    getDSOverride(name: DOMAINNAME): RDATA[RecordType.DS][] {
+        let key = name.join('.').toLowerCase();
+        if (key.at(-1) !== '.') key += '.';
+        return this.dsOverrides.get(key);
+    }
+
+    setDSOverride(name: DOMAINNAME, ds: RDATA[RecordType.DS][]) {
+        let key = name.join('.').toLowerCase();
+        if (key.at(-1) !== '.') key += '.';
+        if (ds) this.dsOverrides.set(key, ds);
+        else this.dsOverrides.delete(key);
+    }
     
     abstract resolve(hostname: string, rrtype?: (keyof typeof RecordType) | 'ANY', options?: ResolveOptions): Promise<any>;
     abstract resolve(questions: { hostname: string, rrtype: (keyof typeof RecordType) }[], options?: ResolveOptions & {

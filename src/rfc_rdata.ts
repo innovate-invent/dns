@@ -34,6 +34,11 @@ export type OPAQUE = ArrayBuffer;
 export type DOMAINNAME = string[];
 export const DOMAINNAME = 'string[]';
 
+export function domainNameEq(a: DOMAINNAME, b: DOMAINNAME): boolean {
+    if (a.length !== b.length) return false;
+    return a.every((label, i) => label === b[i]);
+}
+
 type RRDataLayout = ((d: Tokenizer) => any) | TokenType[] | TokenType | { [key: string]: RRDataLayout };
 
 type SIG = { type_covered: RecordType, algorithm: number, labels: number, original_ttl: number, sig_expiration: number, sig_inception: number, key_tag: number, signer: DOMAINNAME, signature: OPAQUE };
@@ -112,7 +117,7 @@ export type RDATA = {
     [RecordType.SSHFP]: { algorithm: number, fp_type: number, fingerprint: OPAQUE },
     [RecordType.IPSECKEY]: { precedence: number, gateway_type: number, algorithm: number, gateway?: IP4ADDR | IP6ADDR | DOMAINNAME, public_key: OPAQUE },
     [RecordType.NSEC3]: { hash_algorithm: number, opt_out: boolean, iterations: number, salt: ArrayBuffer, next_hashed_owner_name: ArrayBuffer, type_bit_map: Set<RecordType> },
-    [RecordType.NSEC3PARAM]: { hash_algorithm: number, iterations: number, salt: string },
+    [RecordType.NSEC3PARAM]: { hash_algorithm: number, iterations: number, salt: ArrayBuffer },
     [RecordType.TLSA]: { cert_usage: number, selector: number, matching_type: number, cert_assoc_data: OPAQUE },
     [RecordType.SMIMEA]: { cert_usage: number, selector: number, matching_type: number, cert_assoc_data: OPAQUE },
     [RecordType.CSYNC]: { SOA_serial: number, soaminimum: boolean, immediate: boolean, type_bit_map: Set<RecordType> },
@@ -313,7 +318,7 @@ _rdata.set(RecordType.NSEC3, {
     next_hashed_owner_name: 'bytes',
     type_bit_map
 });
-_rdata.set(RecordType.NSEC3PARAM, {hash_algorithm: 'u8', flags: 'u8', iterations: 'u16', salt: 'string'});
+_rdata.set(RecordType.NSEC3PARAM, {hash_algorithm: 'u8', flags: 'u8', iterations: 'u16', salt: 'bytes'});
 _rdata.set(RecordType.TLSA, {cert_usage: 'u8', selector: 'u8', matching_type: 'u8', cert_assoc_data: 'opaque'});
 _rdata.set(RecordType.SMIMEA, _rdata.get(RecordType.TLSA));
 _rdata.set(RecordType.HIP, 'opaque');

@@ -220,6 +220,7 @@ export type ResolveOptions = {
     ttl?:boolean
     raw?: boolean
     dnssec?: boolean
+    split?: boolean
 };
 
 export interface PromiseResolver {

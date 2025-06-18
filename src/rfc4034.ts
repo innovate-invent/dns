@@ -6,7 +6,7 @@ const _verify = crypto.subtle.verify.bind(crypto.subtle);
 const _importKey = crypto.subtle.importKey.bind(crypto.subtle);
 const _now = Date.now;
 const _parseInt = parseInt;
-// TODO are the following still hackable via Class.prototype?
+// TODO are the following still hackable via Class.prototype? Should we optionally proxy a WebWorker via validate()?
 const _fromUint8Array = Uint8Array.from.bind(Uint8Array);
 const _Uint8Array = Uint8Array;
 const _ArrayBuffer = ArrayBuffer;
@@ -14,25 +14,31 @@ const _DOMParser = DOMParser;
 const _Map = Map;
 const parseXMLFromString = DOMParser.prototype.parseFromString;
 
-import {
-    AuthorityRecord,
-    DNSResponse,
-    Question,
-    record,
-    ResponseRecord,
-} from "./rfc1035.js";
+import {AuthorityRecord, DNSResponse, domainNameLen, Question, record, ResponseRecord,} from "./rfc1035.js";
 import {serialize, TokenType} from "./bin_util.js";
-import {ALGORITHMS, DIGESTS, RecordType, CLASS} from "./constants.js";
-import {_rdata, DOMAINNAME, RDATA} from "./rfc_rdata.js"
+import {ALGORITHMS, CLASS, DIGESTS, RecordType} from "./constants.js";
+import {_rdata, DOMAINNAME, domainNameEq, RDATA} from "./rfc_rdata.js"
 import {BaseResolver} from "./base_resolver.js";
 import {base64url_encode} from "./base64url.js";
 import {JsonWebKey} from "crypto";
+
+/* TODO what is stopping a parent zone from signing a SOA of a child zone that states that the parent is actually the apex
+ zone for the domain and subdomains? This parent zone can then serve this via a "bad-actor" DNS server. Once that is
+ done then clients looking to validate the DNS chain will accept RRSIG from the parent zone for subdomains. The SOA
+ describes where to look for DNSKEY to validate the RRSIG. Even if the client attempts to directly request SOA from a
+ child zone, the bad actor DNS server can prevent it from reaching it and issue NSEC signed by the parent zone.
+ You potentially dont even need a bad actor DNS given that all DNS need to traverse from the root while looking up NS.
+ A request for the child zones NS can be omitted by the parent and the parent can freely publish records for the child
+ zone that DNS servers would then proxy.
+ */
 
 // RRSIG - Contains a cryptographic signature signed by ZSK
 // DNSKEY - Contains a public signing key. KSK or ZSK with zone_key flag set
 // DS - Contains the hash of a DNSKEY record, RRSIG for this record is signed by parent zone ZSK. Hosted by parent zone, but lookup is done on child zone.
 // NSEC and NSEC3 - For explicit denial-of-existence of a DNS record
 // CDNSKEY and CDS - For a child zone requesting updates to DS record(s) in the parent zone.
+
+const NSECTYPES = [RecordType.NSEC, RecordType.NSEC3];
 
 type Expires = {
     expires: number
@@ -44,19 +50,23 @@ type CachedCryptoKeys = Expires & {
     keys: CryptoKey[], keyTags: number[],
 }
 
-type ZoneResult = {isZone: boolean, expires: number};
+type ZoneResult = { name: DOMAINNAME, isZone: boolean, expires: number };
+
+type CachedNSEC3PARAMS = RDATA[RecordType.NSEC3PARAM] & Expires;
 
 // The following should be protected by the JS engine from any external code trying to inject values
 let ROOTDIGESTS: CachedDS = [];
 const SESSIONDSCACHE: Map<string, CachedDS> = new _Map<string, CachedDS>();
 const SESSIONKEYCACHE: Map<string, CachedCryptoKeys> = new _Map<string, CachedCryptoKeys>();
 const SESSIONZONECACHE: Map<string, ZoneResult> = new _Map<string, ZoneResult>();
+const SESSIONNSEC3PARAMSCACHE: Map<string, CachedNSEC3PARAMS> = new _Map<string, CachedNSEC3PARAMS>();
 
 export function clearCaches() {
     ROOTDIGESTS = [];
     SESSIONDSCACHE.clear();
     SESSIONKEYCACHE.clear();
     SESSIONZONECACHE.clear();
+    SESSIONNSEC3PARAMSCACHE.clear();
 }
 
 export class DNSSECValidationError extends Error {
@@ -73,7 +83,7 @@ export class DNSSECValidationError extends Error {
  * @param keyTag key tag of original DNSKEY to filter on
  */
 // This function must not be exported as it returns a reference to the CryptoKeys and not a copy
-async function getKeys(owner: string[], resolver: BaseResolver, keyTag?: number): Promise<CryptoKey[]> {
+async function getKeys(owner: DOMAINNAME, resolver: BaseResolver, keyTag?: number): Promise<CryptoKey[]> {
     const now = _now();
     const label = owner.join('.');
 
@@ -172,7 +182,9 @@ async function getRootDS(): Promise<typeof ROOTDIGESTS> {
  * @param resolver An instance of a resolver used to make requests for the DS records
  */
 // This function must not be exported as it returns a reference to the CachedDS rather than a copy
-async function getStoredDS(owner: string[], resolver: BaseResolver): Promise<CachedDS> {
+async function getStoredDS(owner: DOMAINNAME, resolver: BaseResolver): Promise<RDATA[RecordType.DS][]> {
+    const dsOverride = resolver.getDSOverride(owner);
+    if (dsOverride) return dsOverride;
     if (owner.length === 1 && owner[0].length === 0) return getRootDS();  // Root key
 
     // Check session cache
@@ -307,7 +319,7 @@ export async function importDNSKEY(rdata: RDATA[RecordType.DNSKEY]): Promise<Cry
  * Canonical count of DNS name labels as per RRSIG RDATA 'labels' field
  * @param name DNS name to count
  */
-export function labelCount(name: string[]): number {
+export function labelCount(name: DOMAINNAME): number {
     let ownerNameLen = name.length;
     // Root (".") has a Labels field value of 0 and
     // The value of the Labels field MUST NOT count either the wildcard label (if present)
@@ -318,28 +330,46 @@ export function labelCount(name: string[]): number {
 }
 
 /**
+ * Recursively query each subdomain walking up the domain hierarchy until a matching SOA record is found
+ * @param name DOMAINNAME to resolve the zone apex for
+ * @param resolver BaseResolver used to resolve SOA records
+ */
+export async function getZoneApex(name: DOMAINNAME, resolver: BaseResolver, recurse = false): Promise<ZoneResult> {
+    const now = _now();
+    const domain = name.join('.');
+    let cachedzone = SESSIONZONECACHE.get(domain);
+    if (cachedzone) {
+        if (cachedzone.expires <= now) SESSIONZONECACHE.delete(domain);
+        else return cachedzone;
+    }
+    const response = await resolver.resolve(name.join('.'), "SOA", {
+        dnssec: true,
+        raw: true,
+        recursive: true
+    }) as DNSResponse;
+    const zones = [
+        ...response.answer.filter((r: ResponseRecord<RecordType.SOA>) => r.TYPE === RecordType.SOA),
+        ...response.authority.filter((r: ResponseRecord<RecordType.SOA>) => r.TYPE === RecordType.SOA), // Recursive response can return SOA in auth section
+    ];
+    for (const zone of zones) {
+        SESSIONZONECACHE.set(zone.NAME.join('.'), {name: zone.NAME, isZone: true, expires: (zone.TTL * 1000) + now});
+    }
+    cachedzone = SESSIONZONECACHE.get(domain);
+    if (cachedzone) return cachedzone;
+    cachedzone = {name, isZone: false, expires: now + 300000};
+    SESSIONZONECACHE.set(domain, cachedzone);
+    if (recurse) return getZoneApex(name.slice(1), resolver);
+    return cachedzone;
+}
+
+/**
  * Helper to determine if a domain is a zone apex
  * @param name Domain name to query
  * @param resolver Resolver instance used to make subsequent DNS requests to fetch SOA records
  * @return true if the domain has an associated SOA record
  */
-export async function isZone(name: DOMAINNAME, resolver: BaseResolver): Promise<boolean> {
-    const now = _now();
-    const domain = name.join('.');
-    const cachedzone = SESSIONZONECACHE.get(domain);
-    if (cachedzone) {
-        if (cachedzone.expires < now) SESSIONZONECACHE.delete(domain);
-        else if (cachedzone.isZone) return true;
-    }
-    const response = await resolver.resolve(name.join('.'), "SOA", {dnssec: true, raw: true, recursive: true}) as DNSResponse;
-    const zones = [
-        ...response.answer.filter((r: ResponseRecord<RecordType.SOA>)=>r.TYPE === RecordType.SOA),
-        ...response.authority.filter((r: ResponseRecord<RecordType.SOA>)=>r.TYPE === RecordType.SOA), // Recursive response can return SOA in auth section
-    ];
-    for (const zone of zones) {
-        SESSIONZONECACHE.set(zone.NAME.join('.'), {isZone: true, expires: (zone.TTL * 1000) + now});
-    }
-    return SESSIONZONECACHE.has(domain);
+export async function isZoneApex(name: DOMAINNAME, resolver: BaseResolver): Promise<boolean> {
+    return (await getZoneApex(name, resolver, false)).isZone;
 }
 
 /**
@@ -351,14 +381,21 @@ export async function isZone(name: DOMAINNAME, resolver: BaseResolver): Promise<
  */
 export async function inZone(query: DOMAINNAME, zone: DOMAINNAME, resolver: BaseResolver): Promise<boolean> {
     // query must be a subdomain or exactly equal
-    if (zone.every((label, i)=>label === query[i])) return true; // They are identical and must be the same zone
-    // Check that query is a decendant of zone
+    if (domainNameEq(query, zone)) return true; // They are identical and must be the same zone
+    // Check that query is a descendant of zone
     if (!zone.toReversed().every((label, i) => label === query.at(-(i + 1)))) return false;
 
-    let remaining = query.slice(0);
-    while (remaining.length > zone.length && !await isZone(remaining, resolver)) remaining = remaining.slice(1);
-    if (remaining.length !== zone.length) return false;
-    return isZone(zone, resolver);
+    const apex = await getZoneApex(query, resolver, true);
+    return apex.isZone && domainNameEq(apex.name, zone);
+}
+
+export function canonicalCompareLabels(a: DOMAINNAME, b: DOMAINNAME) {
+    for (let i = 1; i <= Math.min(a.length, b.length); ++i) {
+        // This uses JS string comparison and isn't comparing individual characters, ie '' < 'example'
+        if (a.at(-i) < b.at(-i)) return -1;
+        if (a.at(-i) > b.at(-i)) return 1;
+    }
+    return a.length - b.length;
 }
 
 /**
@@ -367,21 +404,20 @@ export async function inZone(query: DOMAINNAME, zone: DOMAINNAME, resolver: Base
  * @param names List of names
  * @return names, sorted and lowercased
  */
-export function canonicalSortLabels(names: string[][]): string[][] {
+export function canonicalSortLabels(names: DOMAINNAME[]): DOMAINNAME[] {
     // For the purposes of DNS security, owner names are ordered by treating
     // individual labels as unsigned left-justified octet strings.  The
     // absence of a octet sorts before a zero value octet, and uppercase
     // US-ASCII letters are treated as if they were lowercase US-ASCII
     // letters.
     names = names.map(name => name.map(label => label.toLowerCase()));
-    return names.sort((a, b) => {
-        for (let i = 1; i <= Math.min(a.length, b.length); ++i) {
-            // This uses JS string comparison and isn't comparing individual characters, ie '' < 'example'
-            if (a.at(-i) < b.at(-i)) return -1;
-            if (a.at(-i) > b.at(-i)) return 1;
-        }
-        return a.length - b.length;
-    })
+    return names.sort(canonicalCompareLabels);
+}
+
+export function canonicalSortRecords(rr: ResponseRecord<any>[]) {
+    return rr.map(r => [r.NAME.map(label => label.toLowerCase()), r] as [DOMAINNAME, ResponseRecord<any>])
+        .sort((pair1, pair2) => canonicalCompareLabels(pair1[0], pair2[0]))
+        .map(pair => pair[1]);
 }
 
 /**
@@ -461,7 +497,7 @@ export function signedData(rrsigRDATA: RDATA[RecordType.RRSIG], rrset: ResponseR
                     // if rrsig_labels > fqdn_labels the RRSIG RR did not pass the necessary validation checks and MUST NOT be used to authenticate this RRset.
                     if (rrsigRDATA.labels > val.length - 1) throw new DNSSECValidationError(`${rr.NAME} ${RecordType[rr.TYPE]} is a higher level domain than the RRSIG validating it`);
                     if (rrsigRDATA.labels < val.length - 1) val = ["*", ...val.slice(-(rrsigRDATA.labels + 1))];
-                    val = (val as string[]).map(v => v.toLowerCase());
+                    val = (val as DOMAINNAME).map(v => v.toLowerCase());
                     break;
                 case "TTL":
                     // the RR's TTL is set to its original value as it appears in the originating authoritative zone or the Original TTL field of the covering RRSIG RR.
@@ -506,8 +542,8 @@ export async function validateRecords(records: ResponseRecord<any>[], resolver: 
     }, new Map<string, ResponseRecord<any>[]>()).values());
 
     // Catch possible NSEC issue early
-    const types_validating = new Set(rrsets.map(rrset=>rrset[0].TYPE));
-    if (!rrsigs.every(sig=>types_validating.has(sig.RDATA.type_covered)))
+    const types_validating = new Set(rrsets.map(rrset => rrset[0].TYPE));
+    if (!rrsigs.every(sig => types_validating.has(sig.RDATA.type_covered)))
         throw new DNSSECValidationError('RRSigs are present that cover RR types that are missing');
 
     const SOAIncluded = rrsets.findIndex(set => set[0].CLASS === CLASS.IN && set[0].TYPE === RecordType.SOA);
@@ -517,6 +553,9 @@ export async function validateRecords(records: ResponseRecord<any>[], resolver: 
         rrsets[0] = rrsets[SOAIncluded];
         rrsets[SOAIncluded] = first;
     }
+
+    // TODO sort DS ahead of others
+    // DS MUST be included in the response: https://www.rfc-editor.org/rfc/rfc4035#section-3.1.4
 
     const keysIncluded = rrsets.findIndex(set => set[0].CLASS === CLASS.IN && set[0].TYPE === RecordType.DNSKEY && set.some((k: ResponseRecord<RecordType.DNSKEY>) => k.RDATA.zone_key));
     if (keysIncluded > 0) {
@@ -529,6 +568,7 @@ export async function validateRecords(records: ResponseRecord<any>[], resolver: 
     match: for (const rrset of rrsets) {
         const rr = rrset[0];
         // https://datatracker.ietf.org/doc/html/rfc4035#section-5.3.1
+        // RRSIG MUST be included in the response when available: https://www.rfc-editor.org/rfc/rfc4035#section-3.1.1
         const rrsigMatchResults = await Promise.all(rrsigs.map(async r =>
             r.NAME.join(".") === rr.NAME.join(".") &&  // The RRSIG RR and the RRset MUST have the same owner name
             r.CLASS === rr.CLASS &&  // and the same class.
@@ -538,7 +578,7 @@ export async function validateRecords(records: ResponseRecord<any>[], resolver: 
             r.RDATA.sig_expiration >= now &&  // The validator's notion of the current time MUST be less than or equal to the time listed in the RRSIG RR's Expiration field.
             r.RDATA.sig_inception <= now  // The validator's notion of the current time MUST be greater than or equal to the time listed in the RRSIG RR's Inception field.
         ));
-        const rrsigMatches = rrsigs.filter((_, i)=>rrsigMatchResults[i]);
+        const rrsigMatches = rrsigs.filter((_, i) => rrsigMatchResults[i]);
 
         if (!rrsigMatches || rrsigMatches.length === 0) throw new Error(`No matching RRSIG for ${rr.NAME.join('.')} ${RecordType[rr.TYPE]}`);
         // The RRSIG RR's Signer's Name, Algorithm, and Key Tag fields MUST match the owner name, algorithm, and key tag for some DNSKEY RR in the zone's apex DNSKEY RRset.
@@ -581,6 +621,63 @@ export async function validateRecords(records: ResponseRecord<any>[], resolver: 
     return true;
 }
 
+const nsecNameDigestCache = new Map<string, ArrayBuffer>();
+
+/**
+ * Convert a DOMAINNAME to the format referred to by the relevant NSEC/NSEC3 records
+ * @param rrName DOMAINNAME Domain name to reformat
+ * @param zone DOMAINNAME Zone the rrName belongs to
+ * @param nsec3params NSEC3PARAM RDATA used to hash rrName. If this is provided it is assumed that the NSEC3 scheme is requested, NSEC otherwise.
+ */
+export function toNSECName(rrName: DOMAINNAME, zone: DOMAINNAME, nsec3params?: RDATA[RecordType.NSEC3PARAM]): DOMAINNAME {
+    if (!nsec3params) return rrName.map(label => label.toLowerCase());
+    const dotName = rrName.join('.');
+    let hashedName = nsecNameDigestCache.get(dotName);
+    if (!hashedName) {
+        const salt = new Uint8Array(nsec3params.salt);
+        const nameWireFmt = new ArrayBuffer(domainNameLen(rrName) + salt.byteLength);
+        const encoder = serialize(nameWireFmt);
+        encoder.next();
+        encoder.next(['string[]', rrName]);
+        new Uint8Array(nameWireFmt).set(salt, nameWireFmt.byteLength - salt.byteLength);
+        hashedName = await _digest(DIGESTS[nsec3params.hash_algorithm], nameWireFmt);
+        for (let i = 1; i < nsec3params.iterations; ++i) {
+            const concat = new Uint8Array(hashedName.byteLength + salt.byteLength);
+            concat.set(new Uint8Array(hashedName));
+            concat.set(salt, hashedName.byteLength);
+            hashedName = await _digest(DIGESTS[nsec3params.hash_algorithm], concat);
+        }
+        nsecNameDigestCache.set(dotName, hashedName);
+    }
+    return [String.fromCodePoint(...new Uint8Array(hashedName)), ...zone.map(label => label.toLowerCase())];
+}
+
+export async function nsecCovers(nsec: ResponseRecord<RecordType.NSEC> | ResponseRecord<RecordType.NSEC3>, query: DOMAINNAME) {
+    const before = nsec.NAME.map(label => label.toLowerCase());
+    // Nowhere is it written but the NSEC3 hashes are determined by hashing the entire zones records and then produce NSEC3 records between the gaps in the HASH RANGE.
+    // https://www.rfc-editor.org/rfc/rfc5155#section-5
+    const after = nsec.TYPE === RecordType.NSEC3 ? [String.fromCodePoint(...new Uint8Array(nsec.RDATA.next_hashed_owner_name)), ...before.slice(1)] : nsec.RDATA.next_domain_name.map(label => label.toLowerCase());
+    return canonicalCompareLabels(before, query) <= 0 && canonicalCompareLabels(query, after) > 0;
+}
+
+export async function getNSEC3PARAM(zone: DOMAINNAME, resolver: BaseResolver): Promise<RDATA[RecordType.NSEC3PARAM] | undefined> {
+    const now = _now();
+    const key = zone.join('.').toLowerCase();
+    let param = SESSIONNSEC3PARAMSCACHE.get(key);
+    if (param) {
+        if (param.expires <= now) SESSIONNSEC3PARAMSCACHE.delete(key);
+        else return param;
+    }
+    const response = await resolver.resolve(key, "NSEC3PARAM", {
+        dnssec: true,
+        raw: true,
+    }) as DNSResponse;
+    const record = response.answer.find(rr => rr.TYPE === RecordType.NSEC3PARAM && domainNameEq(zone, rr.NAME)) as ResponseRecord<RecordType.NSEC3PARAM>;
+    if (!record) return undefined;
+    SESSIONNSEC3PARAMSCACHE.set(key, {...record.RDATA, expires: record.TTL * 1000 + now})
+    return record.RDATA;
+}
+
 /**
  * Validate DNS Response using included RRSIG records
  * The Question section of the response must be validated before calling this function
@@ -591,28 +688,61 @@ export default async function validate(response: DNSResponse, resolver: BaseReso
     if (!(await Promise.all([validateRecords(response.authority, resolver), validateRecords(response.additional, resolver), validateRecords(response.answer, resolver)])).every(x => x)) return false;
 
     // After validating all rrsets, check that all Questions have non-empty responses or NSEC records
+    // https://datatracker.ietf.org/doc/html/rfc7129#page-12
+    // NSEC records are only returned for the relevant range of the question
     // https://www.rfc-editor.org/rfc/rfc4035#section-5.4
-    const questions = new Map<string, Question>(response.question.map(q => [q.QNAME.join(".").toLowerCase(), q]));
-    const rrsets = new Set(response.answer.map(rr => `${rr.NAME.join(".").toLowerCase()}_${rr.CLASS}_${rr.TYPE}`));
-    const nsecMap = new Map<string, AuthorityRecord<RecordType.NSEC> | AuthorityRecord<RecordType.NSEC3>>(response.authority.filter(rr => rr.TYPE === RecordType.NSEC || rr.TYPE === RecordType.NSEC3).map((rr: AuthorityRecord<RecordType.NSEC>) => [rr.NAME.join(".").toLowerCase(), rr]));
-    const nsecSigs = new Map<string, AuthorityRecord<RecordType.RRSIG>>(response.authority.filter(rr => rr.TYPE === RecordType.RRSIG && (rr as ResponseRecord<RecordType.RRSIG>).RDATA.type_covered in [RecordType.NSEC, RecordType.NSEC3]).map((rr: AuthorityRecord<RecordType.RRSIG>) => [rr.NAME.join(".").toLowerCase(), rr]));
-    const names = canonicalSortLabels([...Array.from(nsecMap.values()).map(n => n.NAME), ...response.question.map(q => q.QNAME)]).map(n => n.join("."));
-    return true;
-    //const nameDigests = new Map<string, ArrayBuffer>();
-    //const soa = new Map<string, AuthorityRecord<RecordType.SOA>>(response.authority.filter(rr => rr.TYPE === RecordType.SOA).map((rr: AuthorityRecord<RecordType.SOA>) => [rr.NAME.join(".").toLowerCase(), rr]));
-    for (const [name, q] of questions.entries()) {
-        const qIndex = names.lastIndexOf(name);
-        const nsecName = names.at(qIndex - 1);
-        const nsec = nsecMap.get(nsecName);
-        const sig = nsecSigs.get(nsecName);
 
-        // Skip answered questions
-        if (rrsets.has(`${name}_${q.QCLASS}_${q.QTYPE}`)) {
-            // If the requested RR name matches the owner name of an authenticated NSEC RR, then the NSEC RR's type bit map field lists all RR types present at that owner name, and a
-            // resolver can prove that the requested RR type does not exist by checking for the RR type in the bit map.
-            if (!nsec || nsec.RDATA.type_bit_map.has(q.QTYPE)) continue;
-            throw new Error(`NSEC bitmap does not match answer for ${name} ${q.QCLASS} ${q.QTYPE}`);  // TODO log and return false?
+    // NSEC MUST be returned by the resolver if relevant: https://www.rfc-editor.org/rfc/rfc4035#section-3.1.3
+
+    const questions = response.question.map(q => [q.QNAME.map(label => label.toLowerCase()), q] as [DOMAINNAME, Question]).sort((pair1, pair2) => canonicalCompareLabels(pair1[0], pair2[0])).map(pair => pair[1]);
+    const rrsets = new Set(response.answer.map(rr => `${rr.NAME.join('.').toLowerCase()}_${rr.CLASS}_${rr.TYPE}`));
+    //const nsecMap = new Map<string, AuthorityRecord<RecordType.NSEC> | AuthorityRecord<RecordType.NSEC3>>(response.authority.filter(rr => rr.TYPE === RecordType.NSEC3).map((rr: AuthorityRecord<RecordType.NSEC>) => [rr.NAME.join(".").toLowerCase(), rr]));
+    const nsecList = canonicalSortRecords(response.authority.filter(rr => NSECTYPES.includes(rr.TYPE))) as (ResponseRecord<RecordType.NSEC> | ResponseRecord<RecordType.NSEC3>)[];
+    const nsecSigs = response.authority.filter(rr => rr.TYPE === RecordType.RRSIG && NSECTYPES.includes((rr as ResponseRecord<RecordType.RRSIG>).RDATA.type_covered)) as AuthorityRecord<RecordType.RRSIG>[];
+    //const names = canonicalSortLabels([...Array.from(nsecMap.values()).map(n => n.NAME), ...response.question.map(q => q.QNAME)]).map(n => n.join("."));
+
+    if (nsecSigs.length > 1 && !nsecSigs.every(sig => domainNameEq(sig.RDATA.signer, nsecSigs[0].RDATA.signer)) throw
+    // NSEC signer is validated as the zone during NSEC RRSIG validation
+    const nsecZone = nsecSigs[0].RDATA.signer;
+
+    // Infer NSEC3PARAMS
+    let nsec3params: RDATA[RecordType.NSEC3PARAM];
+    let hasNSEC = false;
+    nsecList.forEach(nsec => {
+        if (nsec.TYPE !== RecordType.NSEC3) {
+            hasNSEC = true;
+            return;
         }
+        if (nsec3params) {
+            // TODO multiple questions are not supported such that multiple zones could be queried in the same request
+            if (nsec3params.iterations !== nsec.RDATA.iterations || nsec3params.hash_algorithm !== nsec.RDATA.hash_algorithm) throw new DNSSECValidationError("Multiple different NSEC3 hashing configurations found");
+            const a1 = new Uint8Array(nsec3params.salt);
+            const a2 = new Uint8Array(nsec.RDATA.salt);
+            if (a1.some((v, i) => v !== a2[i])) throw new DNSSECValidationError("Multiple different NSEC3 hashing configurations found");
+        } else nsec3params = nsec.RDATA;
+    });
+    if (!nsec3params && !hasNSEC) nsec3params = await getNSEC3PARAM(nsecZone, resolver);
+
+    const nameDigests = new Map<string, ArrayBuffer>();
+    let nsecI = 0;
+    for (const q of questions) {
+        let nsecName = toNSECName(q.QNAME, nsecZone, nsec3params);
+        // Skip answered questions
+        // The RRSIG signs the complete set of records for a given owner+class+type combination meaning that a partial response would not validate
+        if (rrsets.has(`${q.QNAME.join('.').toLowerCase()}_${q.QCLASS}_${q.QTYPE}`)) continue;
+
+        // A security-aware resolver MUST use the parent NSEC RR when attempting to prove that a DS RRset does not exist.
+        // https://www.rfc-editor.org/rfc/rfc4035#section-5.2
+
+        let nsec = nsecList.find(nsec => nsecCovers(nsec, nsecName));
+
+        // Since a validated NSEC RR proves the existence of both itself and its corresponding RRSIG RR, a validator MUST
+        // ignore the settings of the NSEC and RRSIG bits in an NSEC RR.
+        if (!nsec && NSECTYPES.includes(q.QTYPE)) return false;
+
+        // If the requested RR name matches the owner name of an authenticated NSEC RR, then the NSEC RR's type bit map field lists all RR types present at that owner name, and a
+        // resolver can prove that the requested RR type does not exist by checking for the RR type in the bit map.
+        if (nsec && !nsec.RDATA.type_bit_map.has(q.QTYPE)) continue;
 
         // At this point the only remaining questions are ones without answers or wildcard records. They must have a matching NSEC without the requested type bit set.
         // Wildcard expansion needs to be accounted for when checking of a NSEC record.
@@ -621,48 +751,27 @@ export default async function validate(response: DNSResponse, resolver: BaseReso
         // *.example.com NSEC foo.example.com
         // foo.example.com NSEC example.com
 
+
+
+        // If the complete set of necessary NSEC RRsets is not present in a response (perhaps due to message truncation),
+        // then a security-aware resolver MUST resend the query in order to attempt to obtain the full collection of NSEC
+        // RRs necessary to verify the non-existence of the requested RRset.  As with all DNS operations, however, the
+        // resolver MUST bound the work it puts into answering any particular query.
+        if (!nsec) {
+            const rtype = (!nsec3params) ? "NSEC" : "NSEC3";
+            const response = await resolver.resolve(nsecName.join('.'), rtype, {
+                dnssec: true,
+                raw: true,
+            }) as DNSResponse;
+            const nsecs = response.answer.filter(rr=>NSECTYPES.includes(rr.TYPE)) as (ResponseRecord<RecordType.NSEC> | ResponseRecord<RecordType.NSEC3>)[];
+            nsecList.push(...nsecs);  // Save for next Q
+            nsec = nsecs.find(nsec => nsecCovers(nsec, nsecName));
+            if (!nsec) throw new DNSSECValidationError(`Failed to retrieve ${rtype} record for ${nsecName.join('.')}`);
+        }
+
         // TODO verify NS sig opt-out for NSEC3. This may only apply to upstream DNS Resolvers. https://www.rfc-editor.org/rfc/rfc5155#section-6
 
 
-        // Denial of existence is determined by the following rules:
-        if (sig.RDATA.labels === q.QNAME.length) {
-            // If the number of labels in an authenticated NSEC RR's owner name equals the Labels field of the covering RRSIG RR, then the existence of the NSEC RR proves that
-            // wildcard expansion could not have been used to match the request.
-            if (!nsec.RDATA.type_bit_map.has(q.QTYPE)) continue;
-        } else {
-            // If the requested RR name would appear after an authenticated NSEC RR's owner name and before the name listed in that NSEC RR's Next Domain Name field according to the
-            // canonical DNS name order defined in [RFC4034], then no RRsets with the requested name exist in the zone.
-
-            // However, it is possible that a wildcard could be used to match the requested RR owner name and type, so proving that the requested RRset does not exist also requires
-            // proving that no possible wildcard RRset exists that could have been used to generate a positive response.
-            /*const originalName = ["*", ...q.QNAME.slice(-(sig.RDATA.labels + 1))].join(".");
-             if ("next_domain_name" in nsec.RDATA) {
-             const names = canonicalSortLabels([nsec.NAME, q.QNAME, nsec.RDATA.next_domain_name]).map(n=>n.join("."));
-
-             } else {
-             // NSEC3 hashed next_domain_name
-             const dotName = nsec.NAME.join('.');
-             let hashedName = nameDigests.get(dotName);
-             if (!hashedName) {
-             const salt = new Uint8Array(nsec.RDATA.salt);
-             const nameWireFmt = new ArrayBuffer(domainNameLen(nsec.NAME) + salt.byteLength);
-             const encoder = serialize(nameWireFmt);
-             encoder.next();
-             encoder.next(['string[]', nsec.NAME]);
-             new Uint8Array(nameWireFmt).set(salt, nameWireFmt.byteLength - salt.byteLength);
-             hashedName = await _digest(DIGESTS[nsec.RDATA.hash_algorithm], nameWireFmt);
-             for (let i = 1; i < nsec.RDATA.iterations; ++i) {
-             const concat = new Uint8Array(hashedName.byteLength + salt.byteLength);
-             concat.set(new Uint8Array(hashedName));
-             concat.set(salt, hashedName.byteLength);
-             hashedName = await _digest(DIGESTS[nsec.RDATA.hash_algorithm], concat);
-             }
-             nameDigests.set(dotName, hashedName);
-             }
-
-             }*/
-
-        }
         return false;
     }
 }

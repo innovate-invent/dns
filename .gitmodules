@@ -1,0 +1,3 @@
+[submodule "zonemaster"]
+	path = zonemaster
+	url = https://github.com/zonemaster/zonemaster.git

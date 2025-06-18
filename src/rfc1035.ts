@@ -424,7 +424,12 @@ export abstract class WireFormatResolver extends BaseResolver {
             if (rrtype === "ANY") rrtype = "*";
             else if (rrtype === undefined) rrtype = 'A';
             questions = [new Question(hostname.split('.'), RecordType[rrtype as keyof typeof RecordType])];
-        } else {
+        }
+        /* else if (options.split !== false && questions.length !== 1) {
+            // TODO merge the result and return
+            // Promise.all(questions.map(q=>this.resolve(q.hostname, q.rrtype, options))
+        } */
+        else {
             questions = hostname.map(q => new Question(q.hostname.split('.'), RecordType[q.rrtype as keyof typeof RecordType]));
         }
         const request = buildRequest(questions, options && options.recursive, options && options.dnssec);
@@ -480,6 +485,7 @@ export abstract class WireFormatResolver extends BaseResolver {
 
                         // verify DNSSEC
                         if (options && options.dnssec && !await validate(response, this)) throw new Error(`DNSSEC validation for ${rrtype} from ${hostname} failed`);
+                        // TODO throw NODATA or NXDOMAIN if DNSSEC enabled and valid NSEC is present
 
                         // Cache response with expires set to the smallest record TTL
                         const minTTL = response.answer.reduce((acc, cur) => acc > cur.TTL ? cur.TTL : acc, 700000); // Max TTL is 604800
