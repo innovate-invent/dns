@@ -14,7 +14,7 @@ const _DOMParser = DOMParser;
 const _Map = Map;
 const parseXMLFromString = DOMParser.prototype.parseFromString;
 
-import {AuthorityRecord, DNSResponse, domainNameLen, Question, record, ResponseRecord,} from "./rfc1035.js";
+import {DNSResponse, domainNameLen, Question, record, ResponseRecord,} from "./rfc1035.js";
 import {serialize, TokenType} from "./bin_util.js";
 import {ALGORITHMS, CLASS, DIGESTS, RecordType} from "./constants.js";
 import {_rdata, DOMAINNAME, domainNameEq, RDATA} from "./rfc_rdata.js"
@@ -60,15 +60,24 @@ const SESSIONDSCACHE: Map<string, CachedDS> = new _Map<string, CachedDS>();
 const SESSIONKEYCACHE: Map<string, CachedCryptoKeys> = new _Map<string, CachedCryptoKeys>();
 const SESSIONZONECACHE: Map<string, ZoneResult> = new _Map<string, ZoneResult>();
 const SESSIONNSEC3PARAMSCACHE: Map<string, CachedNSEC3PARAMS> = new _Map<string, CachedNSEC3PARAMS>();
+const NSECNAMEDIGESTCACHE = new Map<string, ArrayBuffer>();
 
+/**
+ * Clear the internal session cache storing DNSSEC data that is fetched as part of validation
+ */
 export function clearCaches() {
     ROOTDIGESTS = [];
     SESSIONDSCACHE.clear();
     SESSIONKEYCACHE.clear();
     SESSIONZONECACHE.clear();
     SESSIONNSEC3PARAMSCACHE.clear();
+    NSECNAMEDIGESTCACHE.clear();
 }
 
+/**
+ * DNSSECValidationError is thrown when invalid DNSSEC data or state is encountered
+ * This is not thrown when a response fails to validate with otherwise consistent DNSSEC data
+ */
 export class DNSSECValidationError extends Error {
     constructor(reason?: string) {
         reason = reason ? ": " + reason : "";
@@ -621,8 +630,6 @@ export async function validateRecords(records: ResponseRecord<any>[], resolver: 
     return true;
 }
 
-const nsecNameDigestCache = new Map<string, ArrayBuffer>();
-
 /**
  * Convert a DOMAINNAME to the format referred to by the relevant NSEC/NSEC3 records
  * @param rrName DOMAINNAME Domain name to reformat
@@ -632,7 +639,7 @@ const nsecNameDigestCache = new Map<string, ArrayBuffer>();
 export function toNSECName(rrName: DOMAINNAME, zone: DOMAINNAME, nsec3params?: RDATA[RecordType.NSEC3PARAM]): DOMAINNAME {
     if (!nsec3params) return rrName.map(label => label.toLowerCase());
     const dotName = rrName.join('.');
-    let hashedName = nsecNameDigestCache.get(dotName);
+    let hashedName = NSECNAMEDIGESTCACHE.get(dotName);
     if (!hashedName) {
         const salt = new Uint8Array(nsec3params.salt);
         const nameWireFmt = new ArrayBuffer(domainNameLen(rrName) + salt.byteLength);
@@ -647,20 +654,27 @@ export function toNSECName(rrName: DOMAINNAME, zone: DOMAINNAME, nsec3params?: R
             concat.set(salt, hashedName.byteLength);
             hashedName = await _digest(DIGESTS[nsec3params.hash_algorithm], concat);
         }
-        nsecNameDigestCache.set(dotName, hashedName);
+        NSECNAMEDIGESTCACHE.set(dotName, hashedName);
     }
     return [String.fromCodePoint(...new Uint8Array(hashedName)), ...zone.map(label => label.toLowerCase())];
 }
 
-export async function nsecCovers(nsec: ResponseRecord<RecordType.NSEC> | ResponseRecord<RecordType.NSEC3>, query: DOMAINNAME) {
+export async function nsecCovers(nsec: ResponseRecord<RecordType.NSEC> | ResponseRecord<RecordType.NSEC3>, query: DOMAINNAME, zone: DOMAINNAME): Promise<boolean> {
     const before = nsec.NAME.map(label => label.toLowerCase());
     // Nowhere is it written but the NSEC3 hashes are determined by hashing the entire zones records and then produce NSEC3 records between the gaps in the HASH RANGE.
     // https://www.rfc-editor.org/rfc/rfc5155#section-5
     const after = nsec.TYPE === RecordType.NSEC3 ? [String.fromCodePoint(...new Uint8Array(nsec.RDATA.next_hashed_owner_name)), ...before.slice(1)] : nsec.RDATA.next_domain_name.map(label => label.toLowerCase());
-    return canonicalCompareLabels(before, query) <= 0 && canonicalCompareLabels(query, after) > 0;
+    const q = toNSECName(query, zone, nsec.TYPE === RecordType.NSEC3 ? nsec.RDATA : undefined);
+    return canonicalCompareLabels(before, q) <= 0 && canonicalCompareLabels(q, after) > 0;
 }
 
-export async function getNSEC3PARAM(zone: DOMAINNAME, resolver: BaseResolver): Promise<RDATA[RecordType.NSEC3PARAM] | undefined> {
+/**
+ * Helper to retreive the NSEC3PARAMs for a zone
+ * @param zone The zone to retrieve the params for
+ * @param resolver An instance of a resolver used to make requests for the NSEC3PARAM records
+ */
+// This function must not be exported as it returns a reference to the cached NSEC3PARAMs and not a copy
+async function getNSEC3PARAM(zone: DOMAINNAME, resolver: BaseResolver): Promise<RDATA[RecordType.NSEC3PARAM] | undefined> {
     const now = _now();
     const key = zone.join('.').toLowerCase();
     let param = SESSIONNSEC3PARAMSCACHE.get(key);
@@ -678,6 +692,17 @@ export async function getNSEC3PARAM(zone: DOMAINNAME, resolver: BaseResolver): P
     return record.RDATA;
 }
 
+async function addNSEC(from: ResponseRecord<any>[], to: Map<string, (ResponseRecord<RecordType.NSEC> | ResponseRecord<RecordType.NSEC3>)[]>, resolver: BaseResolver) {
+    for (const nsec of from.filter(rr => NSECTYPES.includes(rr.TYPE))) {
+        const zone = await getZoneApex(nsec.NAME, resolver, true);
+        if (!zone.isZone) throw new DNSSECValidationError(`Unable to resolve zone for ${nsec.NAME.join('.').toLowerCase()}`);
+        const key = zone.name.join('.').toLowerCase();
+        const bin = to.get(key) || [];
+        bin.push(nsec);
+        to.set(key, bin);
+    }
+}
+
 /**
  * Validate DNS Response using included RRSIG records
  * The Question section of the response must be validated before calling this function
@@ -692,86 +717,77 @@ export default async function validate(response: DNSResponse, resolver: BaseReso
     // NSEC records are only returned for the relevant range of the question
     // https://www.rfc-editor.org/rfc/rfc4035#section-5.4
 
-    // NSEC MUST be returned by the resolver if relevant: https://www.rfc-editor.org/rfc/rfc4035#section-3.1.3
-
-    const questions = response.question.map(q => [q.QNAME.map(label => label.toLowerCase()), q] as [DOMAINNAME, Question]).sort((pair1, pair2) => canonicalCompareLabels(pair1[0], pair2[0])).map(pair => pair[1]);
     const rrsets = new Set(response.answer.map(rr => `${rr.NAME.join('.').toLowerCase()}_${rr.CLASS}_${rr.TYPE}`));
-    //const nsecMap = new Map<string, AuthorityRecord<RecordType.NSEC> | AuthorityRecord<RecordType.NSEC3>>(response.authority.filter(rr => rr.TYPE === RecordType.NSEC3).map((rr: AuthorityRecord<RecordType.NSEC>) => [rr.NAME.join(".").toLowerCase(), rr]));
-    const nsecList = canonicalSortRecords(response.authority.filter(rr => NSECTYPES.includes(rr.TYPE))) as (ResponseRecord<RecordType.NSEC> | ResponseRecord<RecordType.NSEC3>)[];
-    const nsecSigs = response.authority.filter(rr => rr.TYPE === RecordType.RRSIG && NSECTYPES.includes((rr as ResponseRecord<RecordType.RRSIG>).RDATA.type_covered)) as AuthorityRecord<RecordType.RRSIG>[];
-    //const names = canonicalSortLabels([...Array.from(nsecMap.values()).map(n => n.NAME), ...response.question.map(q => q.QNAME)]).map(n => n.join("."));
+    const missing = response.question.filter(q=>!rrsets.has(`${q.QNAME.join('.').toLowerCase()}_${q.QCLASS}_${q.QTYPE}`));
+    // The RRSIG signs the complete set of records for a given owner+class+type combination meaning that a partial response would not validate
+    if (missing.length === 0) return true;  // All questions have been answered, no denial of existence check needed
 
-    if (nsecSigs.length > 1 && !nsecSigs.every(sig => domainNameEq(sig.RDATA.signer, nsecSigs[0].RDATA.signer)) throw
-    // NSEC signer is validated as the zone during NSEC RRSIG validation
-    const nsecZone = nsecSigs[0].RDATA.signer;
+    // Sort questions into the zone they should belong to
+    const qZones = new Map<string, Question[]>();
+    for (const q of missing) {
+        const zone = await getZoneApex(q.QNAME, resolver, true);
+        if (!zone.isZone) throw new DNSSECValidationError(`Unable to resolve zone for ${q.QNAME.join('.').toLowerCase()}`);
+        const key = zone.name.join('.').toLowerCase();
+        const bin = qZones.get(key) || [];
+        bin.push(q);
+        qZones.set(key, bin);
+    }
 
-    // Infer NSEC3PARAMS
-    let nsec3params: RDATA[RecordType.NSEC3PARAM];
-    let hasNSEC = false;
-    nsecList.forEach(nsec => {
-        if (nsec.TYPE !== RecordType.NSEC3) {
-            hasNSEC = true;
-            return;
+    // NSEC MUST be returned by the resolver if relevant: https://www.rfc-editor.org/rfc/rfc4035#section-3.1.3
+    // Though is it possible the resolver is non-compliant or the response is truncated
+    const nsecZones = new Map<string, (ResponseRecord<RecordType.NSEC> | ResponseRecord<RecordType.NSEC3>)[]>();
+    await addNSEC(response.answer, nsecZones, resolver);
+    await addNSEC(response.authority, nsecZones, resolver);
+
+
+    for (const [z, questions] of qZones.entries()) {
+        const zone = z.split('.');
+        const nsecList = nsecZones.get(z) || [];
+        for (const q of questions) {
+            // Since a validated NSEC RR proves the existence of both itself and its corresponding RRSIG RR, a validator MUST
+            // ignore the settings of the NSEC and RRSIG bits in an NSEC RR.
+            // https://www.rfc-editor.org/rfc/rfc4035#section-5.4
+            // Given that the requested NSEC is already determined to be missing, just fail
+            if (NSECTYPES.includes(q.QTYPE)) return false;
+
+            // If the requested RR name matches the owner name of an authenticated NSEC RR, then the NSEC RR's type bit map field lists all RR types present at that owner name, and a
+            // resolver can prove that the requested RR type does not exist by checking for the RR type in the bit map.
+            let nsec;
+            let qname= q.QNAME;
+            while (!nsec) {
+                nsec = nsecList.find(nsec =>
+                    // for a signed delegation (DS), there are two NSEC RRs associated with the delegated name.  One NSEC RR resides in the parent zone and
+                    // can be used to prove whether a DS RRset exists for the delegated name.  The second NSEC RR resides in the child zone and identifies
+                    // which RRsets are present at the apex of the child zone.  The parent NSEC RR and child NSEC RR can always be distinguished because the SOA
+                    // bit will be set in the child NSEC RR and clear in the parent NSEC RR.
+                    // A security-aware resolver MUST use the parent NSEC RR when attempting to prove that a DS RRset does not exist.
+                    // https://www.rfc-editor.org/rfc/rfc4035#section-5.2
+                    q.QTYPE === RecordType.DS && !nsec.RDATA.type_bit_map.has(RecordType.SOA) &&
+                    nsecCovers(nsec, qname, zone)
+                );
+                if (!nsec) {
+                    // At this point the only remaining questions are ones without answers or wildcard records. They must have a matching NSEC without the requested type bit set.
+                    // Wildcard expansion needs to be accounted for when checking of a NSEC record.
+                    if (qname.length <= zone.length) break;
+                    qname = ['*', ...qname.slice(qname[0] === '*' ? 2 : 1)];
+                }
+            }
+
+            if (nsec && !nsec.RDATA.type_bit_map.has(q.QTYPE)) continue;
+
+            if (!nsec) {
+                // TODO If the complete set of necessary NSEC RRsets is not present in a response (perhaps due to message truncation),
+                //  then a security-aware resolver MUST resend the query in order to attempt to obtain the full collection of NSEC
+                //  RRs necessary to verify the non-existence of the requested RRset.  As with all DNS operations, however, the
+                //  resolver MUST bound the work it puts into answering any particular query.
+                // https://www.rfc-editor.org/rfc/rfc4035#section-5.4
+
+                throw new DNSSECValidationError(`No NSEC/NSEC3 included in response for ${q.QNAME.join('.')} ${RecordType[q.QTYPE]}`);
+            }
+
+            // TODO verify NS sig opt-out for NSEC3. This may only apply to upstream DNS Resolvers. https://www.rfc-editor.org/rfc/rfc5155#section-6
+
+            return false;
         }
-        if (nsec3params) {
-            // TODO multiple questions are not supported such that multiple zones could be queried in the same request
-            if (nsec3params.iterations !== nsec.RDATA.iterations || nsec3params.hash_algorithm !== nsec.RDATA.hash_algorithm) throw new DNSSECValidationError("Multiple different NSEC3 hashing configurations found");
-            const a1 = new Uint8Array(nsec3params.salt);
-            const a2 = new Uint8Array(nsec.RDATA.salt);
-            if (a1.some((v, i) => v !== a2[i])) throw new DNSSECValidationError("Multiple different NSEC3 hashing configurations found");
-        } else nsec3params = nsec.RDATA;
-    });
-    if (!nsec3params && !hasNSEC) nsec3params = await getNSEC3PARAM(nsecZone, resolver);
-
-    const nameDigests = new Map<string, ArrayBuffer>();
-    let nsecI = 0;
-    for (const q of questions) {
-        let nsecName = toNSECName(q.QNAME, nsecZone, nsec3params);
-        // Skip answered questions
-        // The RRSIG signs the complete set of records for a given owner+class+type combination meaning that a partial response would not validate
-        if (rrsets.has(`${q.QNAME.join('.').toLowerCase()}_${q.QCLASS}_${q.QTYPE}`)) continue;
-
-        // A security-aware resolver MUST use the parent NSEC RR when attempting to prove that a DS RRset does not exist.
-        // https://www.rfc-editor.org/rfc/rfc4035#section-5.2
-
-        let nsec = nsecList.find(nsec => nsecCovers(nsec, nsecName));
-
-        // Since a validated NSEC RR proves the existence of both itself and its corresponding RRSIG RR, a validator MUST
-        // ignore the settings of the NSEC and RRSIG bits in an NSEC RR.
-        if (!nsec && NSECTYPES.includes(q.QTYPE)) return false;
-
-        // If the requested RR name matches the owner name of an authenticated NSEC RR, then the NSEC RR's type bit map field lists all RR types present at that owner name, and a
-        // resolver can prove that the requested RR type does not exist by checking for the RR type in the bit map.
-        if (nsec && !nsec.RDATA.type_bit_map.has(q.QTYPE)) continue;
-
-        // At this point the only remaining questions are ones without answers or wildcard records. They must have a matching NSEC without the requested type bit set.
-        // Wildcard expansion needs to be accounted for when checking of a NSEC record.
-
-        // example.com NSEC *.example.com
-        // *.example.com NSEC foo.example.com
-        // foo.example.com NSEC example.com
-
-
-
-        // If the complete set of necessary NSEC RRsets is not present in a response (perhaps due to message truncation),
-        // then a security-aware resolver MUST resend the query in order to attempt to obtain the full collection of NSEC
-        // RRs necessary to verify the non-existence of the requested RRset.  As with all DNS operations, however, the
-        // resolver MUST bound the work it puts into answering any particular query.
-        if (!nsec) {
-            const rtype = (!nsec3params) ? "NSEC" : "NSEC3";
-            const response = await resolver.resolve(nsecName.join('.'), rtype, {
-                dnssec: true,
-                raw: true,
-            }) as DNSResponse;
-            const nsecs = response.answer.filter(rr=>NSECTYPES.includes(rr.TYPE)) as (ResponseRecord<RecordType.NSEC> | ResponseRecord<RecordType.NSEC3>)[];
-            nsecList.push(...nsecs);  // Save for next Q
-            nsec = nsecs.find(nsec => nsecCovers(nsec, nsecName));
-            if (!nsec) throw new DNSSECValidationError(`Failed to retrieve ${rtype} record for ${nsecName.join('.')}`);
-        }
-
-        // TODO verify NS sig opt-out for NSEC3. This may only apply to upstream DNS Resolvers. https://www.rfc-editor.org/rfc/rfc5155#section-6
-
-
-        return false;
     }
 }
