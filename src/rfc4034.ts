@@ -87,14 +87,14 @@ export class DNSSECValidationError extends Error {
 
 /**
  * Get zone signing keys for owner zone
- * @param owner name of DNSKEY owner in canonical form (lowercase)
+ * @param owner name of DNSKEYs
  * @param resolver An instance of a resolver used to make requests for the DNSKEY records
  * @param keyTag key tag of original DNSKEY to filter on
  */
 // This function must not be exported as it returns a reference to the CryptoKeys and not a copy
 async function getKeys(owner: DOMAINNAME, resolver: BaseResolver, keyTag?: number): Promise<CryptoKey[]> {
     const now = _now();
-    const label = owner.join('.');
+    const label = owner.join('.').toLowerCase();
 
     // Check session cache
     if (SESSIONKEYCACHE.has(label)) {
@@ -109,7 +109,7 @@ async function getKeys(owner: DOMAINNAME, resolver: BaseResolver, keyTag?: numbe
     }
 
     // Retrieve keys
-    const response = (await resolver.resolve(owner.join('.'), 'DNSKEY', {
+    const response = (await resolver.resolve(label, 'DNSKEY', {
         raw: true, dnssec: true
     }) as DNSResponse).answer;
     const keyResponse = response.filter(r => r.TYPE === RecordType.DNSKEY && (r as ResponseRecord<RecordType.DNSKEY>).RDATA.zone_key) as ResponseRecord<RecordType.DNSKEY>[];
@@ -198,7 +198,7 @@ async function getStoredDS(owner: DOMAINNAME, resolver: BaseResolver): Promise<R
 
     // Check session cache
     const now = _now();
-    const label = owner.join('.');
+    const label = owner.join('.').toLowerCase();
     if (SESSIONDSCACHE.has(label)) {
         const ds = SESSIONDSCACHE.get(label).filter(d => d.expires > now);
         SESSIONDSCACHE.set(label, ds);
@@ -206,7 +206,7 @@ async function getStoredDS(owner: DOMAINNAME, resolver: BaseResolver): Promise<R
     }
 
     // Fetch DS from DNS
-    const response = await resolver.resolve(owner.join('.'), "DS", {
+    const response = await resolver.resolve(label, "DS", {
         raw: true, dnssec: true
     }) as DNSResponse;
     const dsrecords = response.answer.filter(r => r.TYPE === RecordType.DS) as ResponseRecord<RecordType.DS>[];
@@ -229,13 +229,15 @@ async function getStoredDS(owner: DOMAINNAME, resolver: BaseResolver): Promise<R
  * DS records are cached in localStorage, and revalidated when read from storage to protect from injection attacks.
  * @param ksk KSK record to validate. Requires NAME, RDATA, and raw_data fields populated.
  * @param resolver An instance of a resolver used to make requests for the DS records
+ * @param dsOverride List of DS RDATA to use instead of fetched DS or any DS overrides configured in the resolver
+ * @return True if a zone DS matches the KSK digest, false otherwise
  */
-export async function validateKSK(ksk: ResponseRecord<RecordType.DNSKEY>, resolver: BaseResolver): Promise<boolean> {
+export async function validateKSK(ksk: ResponseRecord<RecordType.DNSKEY>, resolver: BaseResolver, dsOverride?: RDATA[RecordType.DS][]): Promise<boolean> {
     if (!ksk.RDATA.zone_key) return false;  // The DNSKEY RR referred to in the DS RR MUST be a DNSSEC zone key.
     if (!ksk.raw_rdata || ksk.raw_rdata.byteLength === 0) throw Error('KSK raw_rdata field not populated');
     if (ksk.RDATA.protocol !== 3) return false; // https://datatracker.ietf.org/doc/html/rfc4034#section-2.1.2
     const owner = ksk.NAME.map(v => v.toLowerCase());
-    const ds = await getStoredDS(owner, resolver);
+    const ds = dsOverride || await getStoredDS(owner, resolver);
 
     // digest = digest_algorithm( DNSKEY owner name | DNSKEY RDATA);
     // DNSKEY RDATA = Flags | Protocol | Algorithm | Public Key.  "|" denotes concatenation
@@ -339,6 +341,16 @@ export function labelCount(name: DOMAINNAME): number {
 }
 
 /**
+ * Helper to count the number of matching labels starting at the root (right to left)
+ */
+export function matchingLabels(a: DOMAINNAME, b: DOMAINNAME): number {
+    let longer, shorter;
+    if (a.length > b.length) [longer, shorter] = [a, b];
+    else [shorter, longer] = [a, b];
+    return shorter.toReversed().reduce((count, label, i) => label === longer.at(-(i + 1)) ? count + 1 : count, 0)
+}
+
+/**
  * Recursively query each subdomain walking up the domain hierarchy until a matching SOA record is found
  * @param name DOMAINNAME to resolve the zone apex for
  * @param resolver BaseResolver used to resolve SOA records
@@ -356,15 +368,27 @@ export async function getZoneApex(name: DOMAINNAME, resolver: BaseResolver, recu
         raw: true,
         recursive: true
     }) as DNSResponse;
-    const zones = [
-        ...response.answer.filter((r: ResponseRecord<RecordType.SOA>) => r.TYPE === RecordType.SOA),
-        ...response.authority.filter((r: ResponseRecord<RecordType.SOA>) => r.TYPE === RecordType.SOA), // Recursive response can return SOA in auth section
-    ];
+    const combinedRecords = [...response.answer, ...response.authority];  // Recursive response can return SOA in auth section
+    const zones = combinedRecords.filter((r: ResponseRecord<RecordType.SOA>) => r.TYPE === RecordType.SOA);
     for (const zone of zones) {
         SESSIONZONECACHE.set(zone.NAME.join('.'), {name: zone.NAME, isZone: true, expires: (zone.TTL * 1000) + now});
     }
     cachedzone = SESSIONZONECACHE.get(domain);
     if (cachedzone) return cachedzone;
+    if (zones.length) {
+        // Zones were returned that didn't match the name exactly, return the longest (best) matching zone
+        // There really should only ever be one SOA returned at a time but it is conceiveable that a resolver may return all SOA records recursively.
+        let longestMatch = zones[0];
+        let longestMatchLength = matchingLabels(longestMatch.NAME, name);
+        for (const zone of zones) {
+            const matchLength = matchingLabels(zone.NAME, name);
+            if (longestMatchLength < matchLength) {
+                longestMatch = zone;
+                longestMatchLength = matchLength;
+            }
+        }
+        return SESSIONZONECACHE.get(longestMatch.NAME.join('.'));
+    }
     cachedzone = {name, isZone: false, expires: now + 300000};
     SESSIONZONECACHE.set(domain, cachedzone);
     if (recurse) return getZoneApex(name.slice(1), resolver);
@@ -389,10 +413,8 @@ export async function isZoneApex(name: DOMAINNAME, resolver: BaseResolver): Prom
  * @return true if the query domain belongs to the provided DNS zone
  */
 export async function inZone(query: DOMAINNAME, zone: DOMAINNAME, resolver: BaseResolver): Promise<boolean> {
-    // query must be a subdomain or exactly equal
-    if (domainNameEq(query, zone)) return true; // They are identical and must be the same zone
     // Check that query is a descendant of zone
-    if (!zone.toReversed().every((label, i) => label === query.at(-(i + 1)))) return false;
+    if (matchingLabels(zone, query) !== zone.length) return false;
 
     const apex = await getZoneApex(query, resolver, true);
     return apex.isZone && domainNameEq(apex.name, zone);
@@ -533,7 +555,7 @@ export function signedData(rrsigRDATA: RDATA[RecordType.RRSIG], rrset: ResponseR
  * @param records Array of ResponseRecords including accompanying RRSIG
  * @param resolver Resolver instance used to make subsequent DNS requests needed to verify response
  * @return true if the provided records are valid relative to the included RRSIG records
- * @throws Error when some required relationship between the records, the DNSKEYs, and the RRSIGs is not met
+ * @throws DNSSECValidationError when some required relationship between the records, the DNSKEYs, and the RRSIGs is not met
  */
 export async function validateRecords(records: ResponseRecord<any>[], resolver: BaseResolver): Promise<boolean> {
     const rrsigs = records.filter(r => r.TYPE === RecordType.RRSIG) as ResponseRecord<RecordType.RRSIG>[];
@@ -577,7 +599,7 @@ export async function validateRecords(records: ResponseRecord<any>[], resolver: 
     match: for (const rrset of rrsets) {
         const rr = rrset[0];
         // https://datatracker.ietf.org/doc/html/rfc4035#section-5.3.1
-        // RRSIG MUST be included in the response when available: https://www.rfc-editor.org/rfc/rfc4035#section-3.1.1
+        // RRSIG MUST be included in the response: https://www.rfc-editor.org/rfc/rfc4035#section-3.1.1
         const rrsigMatchResults = await Promise.all(rrsigs.map(async r =>
             r.NAME.join(".") === rr.NAME.join(".") &&  // The RRSIG RR and the RRset MUST have the same owner name
             r.CLASS === rr.CLASS &&  // and the same class.
@@ -597,7 +619,7 @@ export async function validateRecords(records: ResponseRecord<any>[], resolver: 
                 // Cache KSK
                 const ksk = rrset.find(r => r.RDATA.key_tag === rrsig.RDATA.key_tag && r.RDATA.zone_key);
                 if (ksk) {
-                    if (!await validateKSK(ksk, resolver)) throw new Error('Unable to validate KSK');
+                    if (!await validateKSK(ksk, resolver)) throw new DNSSECValidationError('Unable to validate KSK while verifying DNSKEYs');
                     // Verify rrset with KSK
                     const keys = [await importDNSKEY(ksk.RDATA)];
                     // Cache for later
@@ -636,7 +658,7 @@ export async function validateRecords(records: ResponseRecord<any>[], resolver: 
  * @param zone DOMAINNAME Zone the rrName belongs to
  * @param nsec3params NSEC3PARAM RDATA used to hash rrName. If this is provided it is assumed that the NSEC3 scheme is requested, NSEC otherwise.
  */
-export function toNSECName(rrName: DOMAINNAME, zone: DOMAINNAME, nsec3params?: RDATA[RecordType.NSEC3PARAM]): DOMAINNAME {
+export async function toNSECName(rrName: DOMAINNAME, zone: DOMAINNAME, nsec3params?: RDATA[RecordType.NSEC3PARAM]): Promise<DOMAINNAME> {
     if (!nsec3params) return rrName.map(label => label.toLowerCase());
     const dotName = rrName.join('.');
     let hashedName = NSECNAMEDIGESTCACHE.get(dotName);
@@ -659,48 +681,19 @@ export function toNSECName(rrName: DOMAINNAME, zone: DOMAINNAME, nsec3params?: R
     return [String.fromCodePoint(...new Uint8Array(hashedName)), ...zone.map(label => label.toLowerCase())];
 }
 
+/**
+ * Test if a query domain name is within the canonical sorted range of the NSEC/NSEC3 record owner name and next owner name
+ * @param nsec NSEC/NSEC3 record to test against
+ * @param query Query domain name to check
+ * @param zone Zone apex domain name for the Query/NSEC record
+ */
 export async function nsecCovers(nsec: ResponseRecord<RecordType.NSEC> | ResponseRecord<RecordType.NSEC3>, query: DOMAINNAME, zone: DOMAINNAME): Promise<boolean> {
     const before = nsec.NAME.map(label => label.toLowerCase());
     // Nowhere is it written but the NSEC3 hashes are determined by hashing the entire zones records and then produce NSEC3 records between the gaps in the HASH RANGE.
     // https://www.rfc-editor.org/rfc/rfc5155#section-5
     const after = nsec.TYPE === RecordType.NSEC3 ? [String.fromCodePoint(...new Uint8Array(nsec.RDATA.next_hashed_owner_name)), ...before.slice(1)] : nsec.RDATA.next_domain_name.map(label => label.toLowerCase());
-    const q = toNSECName(query, zone, nsec.TYPE === RecordType.NSEC3 ? nsec.RDATA : undefined);
+    const q = await toNSECName(query, zone, nsec.TYPE === RecordType.NSEC3 ? nsec.RDATA : undefined);
     return canonicalCompareLabels(before, q) <= 0 && canonicalCompareLabels(q, after) > 0;
-}
-
-/**
- * Helper to retreive the NSEC3PARAMs for a zone
- * @param zone The zone to retrieve the params for
- * @param resolver An instance of a resolver used to make requests for the NSEC3PARAM records
- */
-// This function must not be exported as it returns a reference to the cached NSEC3PARAMs and not a copy
-async function getNSEC3PARAM(zone: DOMAINNAME, resolver: BaseResolver): Promise<RDATA[RecordType.NSEC3PARAM] | undefined> {
-    const now = _now();
-    const key = zone.join('.').toLowerCase();
-    let param = SESSIONNSEC3PARAMSCACHE.get(key);
-    if (param) {
-        if (param.expires <= now) SESSIONNSEC3PARAMSCACHE.delete(key);
-        else return param;
-    }
-    const response = await resolver.resolve(key, "NSEC3PARAM", {
-        dnssec: true,
-        raw: true,
-    }) as DNSResponse;
-    const record = response.answer.find(rr => rr.TYPE === RecordType.NSEC3PARAM && domainNameEq(zone, rr.NAME)) as ResponseRecord<RecordType.NSEC3PARAM>;
-    if (!record) return undefined;
-    SESSIONNSEC3PARAMSCACHE.set(key, {...record.RDATA, expires: record.TTL * 1000 + now})
-    return record.RDATA;
-}
-
-async function addNSEC(from: ResponseRecord<any>[], to: Map<string, (ResponseRecord<RecordType.NSEC> | ResponseRecord<RecordType.NSEC3>)[]>, resolver: BaseResolver) {
-    for (const nsec of from.filter(rr => NSECTYPES.includes(rr.TYPE))) {
-        const zone = await getZoneApex(nsec.NAME, resolver, true);
-        if (!zone.isZone) throw new DNSSECValidationError(`Unable to resolve zone for ${nsec.NAME.join('.').toLowerCase()}`);
-        const key = zone.name.join('.').toLowerCase();
-        const bin = to.get(key) || [];
-        bin.push(nsec);
-        to.set(key, bin);
-    }
 }
 
 /**
@@ -736,9 +729,14 @@ export default async function validate(response: DNSResponse, resolver: BaseReso
     // NSEC MUST be returned by the resolver if relevant: https://www.rfc-editor.org/rfc/rfc4035#section-3.1.3
     // Though is it possible the resolver is non-compliant or the response is truncated
     const nsecZones = new Map<string, (ResponseRecord<RecordType.NSEC> | ResponseRecord<RecordType.NSEC3>)[]>();
-    await addNSEC(response.answer, nsecZones, resolver);
-    await addNSEC(response.authority, nsecZones, resolver);
-
+    for (const nsec of [...response.answer, ...response.authority].filter(rr => NSECTYPES.includes(rr.TYPE)) as (ResponseRecord<RecordType.NSEC> | ResponseRecord<RecordType.NSEC3>)[]) {
+        const zone = await getZoneApex(nsec.NAME, resolver, true);
+        if (!zone.isZone) throw new DNSSECValidationError(`Unable to resolve zone for ${nsec.NAME.join('.').toLowerCase()}`);
+        const key = zone.name.join('.').toLowerCase();
+        const bin = nsecZones.get(key) || [];
+        bin.push(nsec);
+        nsecZones.set(key, bin);
+    }
 
     for (const [z, questions] of qZones.entries()) {
         const zone = z.split('.');
@@ -776,16 +774,16 @@ export default async function validate(response: DNSResponse, resolver: BaseReso
             if (nsec && !nsec.RDATA.type_bit_map.has(q.QTYPE)) continue;
 
             if (!nsec) {
-                // TODO If the complete set of necessary NSEC RRsets is not present in a response (perhaps due to message truncation),
+                // If the complete set of necessary NSEC RRsets is not present in a response (perhaps due to message truncation),
                 //  then a security-aware resolver MUST resend the query in order to attempt to obtain the full collection of NSEC
                 //  RRs necessary to verify the non-existence of the requested RRset.  As with all DNS operations, however, the
                 //  resolver MUST bound the work it puts into answering any particular query.
                 // https://www.rfc-editor.org/rfc/rfc4035#section-5.4
-
+                // This should trigger a re-attempt via the resolvers broader retry logic
                 throw new DNSSECValidationError(`No NSEC/NSEC3 included in response for ${q.QNAME.join('.')} ${RecordType[q.QTYPE]}`);
             }
 
-            // TODO verify NS sig opt-out for NSEC3. This may only apply to upstream DNS Resolvers. https://www.rfc-editor.org/rfc/rfc5155#section-6
+            // TODO verify NS sig opt-out for NSEC3. This may only apply if validation returns true for a zone without DNSSEC enabled. https://www.rfc-editor.org/rfc/rfc5155#section-6
 
             return false;
         }
