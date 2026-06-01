@@ -1,0 +1,19 @@
+ZoneFile = *(Directive / RR / EOL)
+Directive = "$" 1*AnyChar EOL
+RR = [ Owner ] 1*SEP [ TTL SEP ] [ "IN " ] RRType SEP RData EOL
+Owner = DomainName
+TTL = 1*digit
+RRType = 1*(alpha / digit)
+RData = 1*NotParen [ "(" EOL *( 1*NotParen / EOL ) ")" ]
+
+DomainName = ( DomainLabel *( "." DomainLabel) ["."] ) / "."
+DomainLabel = 1*domain-char
+domain-char = alpha / digit / "-"
+alpha           = %d65-90 / %d97-122
+digit             = %d48-57
+Comment = ";" *(%d9 / %d11-255)
+LF = %d10
+SEP = %d9 / " "
+EOL = *" " [Comment] LF
+AnyChar = %d9 / %d11-58 / %d60-255 ; all except LF and ";"
+NotParen = %d9 / %d11-39 / %d42-58 / %d60-255 ; all except LF and "();"

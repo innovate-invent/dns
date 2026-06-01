@@ -1,6 +1,6 @@
 import * as constants from "./constants.js";
 import {CLASS, RecordType, RCode} from "./constants.js";
-import RDATA, {RDATA as RDATATypes} from "./rfc_rdata.js"
+import RDATA, {RDATA as RDATATypes, presentationFormat as formatRDATA} from "./rfc_rdata.js"
 import {DNSError, ResolveOptions} from "./dns.js";
 import {BaseResolver} from "./base_resolver.js";
 import validate from "./rfc4034.js";
@@ -215,6 +215,17 @@ export const record = {
 //                     For example, the if the TYPE is A and the CLASS is IN,
 //                     the RDATA field is a 4 octet ARPA Internet address.
 } as Record<keyof Omit<ResponseRecord<any>, "RDATA">, TokenType>;
+
+/**
+ * Convert a Resource Record to the specified presentation format
+ * This may emit strings that contain a comment suffix delineated by a ';' character
+ * @param rr Response Record to format
+ */
+export function presentationFormat(rr: ResponseRecord<any>): string {
+    let name = rr.NAME.join('.');
+    if (name.at(-1) !== '.') name += '.';
+    return `${name}\t${CLASS[rr.CLASS]}\t${rr.TTL}\t${RecordType[rr.TYPE]}\t${formatRDATA(rr.RDATA, rr.TYPE)}`;
+}
 
 export interface Edns0Opt {
     NAME: string[],

@@ -7,7 +7,7 @@ import {cmp, setFetch} from "./common.js";
 
 import dns from '../src/index.js'
 import {DNSError, SOARecord} from "../src/dns.js";
-import expected, {Expected} from "./expected.js";
+import {nodeTypes as expected, Expected} from "./expected.js";
 
 import {RecordType} from "../src/constants.js";
 import {base64url_decode} from "../src/base64url.js";
@@ -38,7 +38,10 @@ function testRRType(f: (host: string, cb: (err?: DNSError, addresses?: any[])=>v
 }
 
 describe('dns', () => {
-    before('hook fetch', ()=>{
+    before('set local server', ()=>{
+        dns.setServers(['127.0.0.1']);
+    })
+    /*before('hook fetch', ()=>{
         setFetch( async (input: RequestInfo | URL, init?: RequestInit)=>{
             if (rawData) return new Response(rawData);
             return originalFetch(input, init);
@@ -46,7 +49,7 @@ describe('dns', () => {
     })
     afterEach(()=>{
         rawData = undefined;
-    })
+    })*/
     describe('lookup', () => {
         type Options = 4 | 6 | { family: 4 | 6 | 0, hints?: number, all?: boolean, verbatim?: boolean };
         [
@@ -67,7 +70,7 @@ describe('dns', () => {
                         done(e);
                     }
                 }
-                rawData = base64url_decode(test.raw);
+                //rawData = base64url_decode(test.raw);
                 if (test.options) dns.lookup(test.hostname, test.options as Options, cb);
                 else dns.lookup(test.hostname, cb);
             });

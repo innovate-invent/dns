@@ -3,6 +3,8 @@ import {restoreFetch, setFetch} from "./common.js";
 
 import {
     canonicalSortLabels,
+    canonicalCompareLabels, //TODO
+    canonicalSortRecords, //TODO
     clearCaches,
     importDNSKEY,
     isZoneApex,
@@ -12,6 +14,9 @@ import {
     validateKSK,
     validateRecords,
     verifyRRSIG,
+    toNSECName, //TODO
+    nsecCovers, //TODO
+    matchingLabels, //TODO
 } from '../src/rfc4034.js'
 import {ALGORITHMS, DIGESTS, RecordType, CLASS} from "../src/constants.js";
 import {RDATA} from "../src/rfc_rdata.js";
@@ -128,8 +133,8 @@ describe('RFC4034 DNSSEC', () => {
             const op1 = ['example', 'com', ''];
             const op2 = ['example', 'com', ''];
             await expect(inZone(op1, op2, resolver)).to.eventually.be.true;
-            await expect(op1, 'argument 1 modified').to.eventually.deep.eq(['example', 'com', '']);
-            await expect(op2, 'argument 2 modified').to.eventually.deep.eq(['example', 'com', '']);
+            expect(op1, 'argument 1 modified').to.deep.eq(['example', 'com', '']);
+            expect(op2, 'argument 2 modified').to.deep.eq(['example', 'com', '']);
         })
     })
 
@@ -1057,6 +1062,7 @@ AwEAAa96jeuknZlaeSrvyAJj6ZHv28hhOKkx3rLGXVaC6rXTsDc449/cidltpkyGwCJNnOAlFNKF2jBo
         let TXTRRSIG: ResponseRecord<RecordType.RRSIG>;
         let DNSKEYRRSIG: ResponseRecord<RecordType.RRSIG>;
         beforeEach('set up', async () => {
+            resolver = await FakeResolver.build(['com', 'example.com']);
             ARecord = {
                 NAME: ['example', 'com', ''],
                 TYPE: RecordType.A,

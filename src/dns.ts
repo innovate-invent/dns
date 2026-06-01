@@ -120,6 +120,7 @@ export class DNSError extends Error {
     response?: DNSResponse;
     constructor(message: string, code: ErrorCode, response?: DNSResponse) {
         super(message);
+        this.name = "DNSError";
         this.code = code;
         this.response = response;
     }

@@ -10,6 +10,10 @@ const _parseInt = parseInt;
 const _fromUint8Array = Uint8Array.from.bind(Uint8Array);
 const _Uint8Array = Uint8Array;
 const _ArrayBuffer = ArrayBuffer;
+if (typeof window === 'undefined') { // @ts-ignore
+    // Allows importing in a nodejs script
+    global.DOMParser = {prototype: {parseFromString: undefined}}
+}
 const _DOMParser = DOMParser;
 const _Map = Map;
 const parseXMLFromString = DOMParser.prototype.parseFromString;
@@ -354,8 +358,10 @@ export function matchingLabels(a: DOMAINNAME, b: DOMAINNAME): number {
  * Recursively query each subdomain walking up the domain hierarchy until a matching SOA record is found
  * @param name DOMAINNAME to resolve the zone apex for
  * @param resolver BaseResolver used to resolve SOA records
+ * @param recurse If true and no SOA is returned when querying the resolver, recursively request SOA for parent domains
  */
-export async function getZoneApex(name: DOMAINNAME, resolver: BaseResolver, recurse = false): Promise<ZoneResult> {
+// This function must not be exported as it returns a reference to the ZoneResult rather than a copy
+async function getZoneApex(name: DOMAINNAME, resolver: BaseResolver, recurse = false): Promise<ZoneResult> {
     const now = _now();
     const domain = name.join('.');
     let cachedzone = SESSIONZONECACHE.get(domain);
@@ -402,7 +408,8 @@ export async function getZoneApex(name: DOMAINNAME, resolver: BaseResolver, recu
  * @return true if the domain has an associated SOA record
  */
 export async function isZoneApex(name: DOMAINNAME, resolver: BaseResolver): Promise<boolean> {
-    return (await getZoneApex(name, resolver, false)).isZone;
+    const apex = await getZoneApex(name, resolver, false);
+    return apex.isZone && domainNameEq(name, apex.name);
 }
 
 /**
@@ -692,7 +699,7 @@ export async function nsecCovers(nsec: ResponseRecord<RecordType.NSEC> | Respons
     // Nowhere is it written but the NSEC3 hashes are determined by hashing the entire zones records and then produce NSEC3 records between the gaps in the HASH RANGE.
     // https://www.rfc-editor.org/rfc/rfc5155#section-5
     const after = nsec.TYPE === RecordType.NSEC3 ? [String.fromCodePoint(...new Uint8Array(nsec.RDATA.next_hashed_owner_name)), ...before.slice(1)] : nsec.RDATA.next_domain_name.map(label => label.toLowerCase());
-    const q = await toNSECName(query, zone, nsec.TYPE === RecordType.NSEC3 ? nsec.RDATA : undefined);
+    const q = await toNSECName(query, zone, nsec.TYPE === RecordType.NSEC3 ? nsec.RDATA as unknown as RDATA[RecordType.NSEC3PARAM] : undefined);
     return canonicalCompareLabels(before, q) <= 0 && canonicalCompareLabels(q, after) > 0;
 }
 

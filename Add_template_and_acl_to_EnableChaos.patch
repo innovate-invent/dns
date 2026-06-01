@@ -1,0 +1,19 @@
+Subject: [PATCH] Add template and acl to EnableChaos
+---
+Index: core/dnsserver/server.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/core/dnsserver/server.go b/core/dnsserver/server.go
+--- a/core/dnsserver/server.go	(revision b2a2a5f6480ffc584411305277172aa7fa03cf1b)
++++ b/core/dnsserver/server.go	(date 1750772579243)
+@@ -452,6 +452,8 @@
+ 	"chaos":   {},
+ 	"forward": {},
+ 	"proxy":   {},
++	"template":{},
++	"acl":     {},
+ }
+ 
+ // Quiet mode will not show any informative output on initialization.

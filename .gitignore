@@ -2,3 +2,8 @@
 *.js*
 node_modules
 /coverage/
+/testdata/*.coredns.cfg
+/testdata/*.zone
+/testdata/*.zone.trimmed
+!/testdata/.zone
+!/testdata/xa.zone

@@ -41,8 +41,9 @@ export default class FakeResolver extends BaseResolver {
         expect(options.dnssec, 'DNSSEC must be enabled').to.be.true;
         expect(options.raw, 'Raw response expected').to.be.true;
         expect(typeof hostname, 'hostname is not a string').to.eq('string');
-        const trimmedHostname = (hostname as string).replace(/\.$/, '').toLowerCase();
-        expect(this.pubkeys).to.haveOwnProperty(trimmedHostname);
+        let trimmedHostname = (hostname as string).replace(/\.$/, '').toLowerCase();
+        if (trimmedHostname.endsWith("example.com")) trimmedHostname = "example.com";
+        if (["DS", "DNSKEY"].includes(rrtype as string)) expect(this.pubkeys).to.haveOwnProperty(trimmedHostname);
         if (this.expectedHostname) expect(hostname, 'unexpected hostname when requesting DS for KSK').to.eq(this.expectedHostname);
         switch (rrtype) {
             case "DS":

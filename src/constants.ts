@@ -62,8 +62,8 @@ export enum RecordType {
     'OPENPGPKEY' = 61,    // OpenPGP Key     [RFC7929]     OPENPGPKEY/openpgpkey-completed-template     2014-08-12
     'CSYNC' = 62,    // Child-To-Parent Synchronization     [RFC7477]         2015-01-27
     'ZONEMD' = 63,    // message digest for DNS zone     [draft-wessels-dns-zone-digest]     ZONEMD/zonemd-completed-template     2018-12-12
-    'SVCB' = 64,       // https://tools.ietf.org/id/draft-nygren-dnsop-svcb-httpssvc-00.html
-    'HTTPSSVC' = 65,       // https://tools.ietf.org/id/draft-nygren-dnsop-svcb-httpssvc-00.html
+    'SVCB' = 64,       // https://tools.ietf.org/id/draft-nygren-dnsop-svcb-httpssvc-00.html https://datatracker.ietf.org/doc/rfc9460/
+    'HTTPSSVC' = 65,       // https://tools.ietf.org/id/draft-nygren-dnsop-svcb-httpssvc-00.html https://datatracker.ietf.org/doc/rfc9460/
     // 'Unassigned2' = 64-98,
     'SPF' = 99,         // [RFC7208] https://tools.ietf.org/html/rfc4408
     'UINFO' = 100,    // [IANA-Reserved]

@@ -36,9 +36,8 @@
     "start": "CHROME_BIN=chromium TARGET=test karma start karma.conf.cjs",
     "lint": "eslint src/*.ts",
     "clean": "rm -rf dist",
-    "pretest": "./build_zonemaster.sh",
     "test:compat": "ts-mocha -p tsconfig.node.json spec/nodejs.spec.ts",
-    "test": "karma start --single-run --browsers ChromeHeadless karma.conf.cjs",
+    "test": "test.sh",
     "test:node": "node --test --require ts-node/esm spec/rfc7766.spec.ts",
     "publish": "npm publish --access public"
   },
@@ -67,8 +66,12 @@
     "ts-loader": "^9.5.2",
     "ts-mocha": "^11.1.0",
     "ts-node": "^10.9.2",
+    "tsx": "^4.20.5",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.31.1",
-    "uglify-js": "^3.19.3"
+    "uglify-js": "^3.19.3",
+    "apg-js": "^4.4.0",
+    "apg-js-examples": "^4.2.4",
+    "handlebars": "^4.7.8"
   }
 }

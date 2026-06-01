@@ -4,6 +4,7 @@ export type TokenType =
     | 'u16'
     | 'string'
     | 'u32'
+    | 'u48'
     | 'string[]'
     | 'string[*]'
     | string
@@ -12,7 +13,7 @@ export type TokenType =
     | 'bit'
     | 'opaque'
     | number;
-export type TokenVal = number | string | string[] | ArrayBuffer | undefined | DataView;
+export type TokenVal = number | BigInt | string | string[] | ArrayBuffer | undefined | DataView;
 export type Tokenizer = Generator<TokenVal, undefined, TokenType>;
 
 /**
@@ -54,6 +55,11 @@ export function* deserialize(data: ArrayBuffer, start: number = 0, end?: number)
                 val = view.getUint32(byteOffset);
                 // Currently all u32 values are byte aligned, no shifting required
                 len = 32;
+                break;
+            case 'u48':
+                val = (BigInt(view.getUint16(byteOffset)) << 32n) | BigInt(view.getUint32(byteOffset+2));
+                // Currently all u48 values are byte aligned, no shifting required
+                len = 48;
                 break;
             case 'u3':
                 // Only used by header Z field
@@ -206,6 +212,13 @@ export function* serialize(data: ArrayBuffer): Generator<number, undefined, [Tok
                     // Currently all u32 values are byte aligned, no shifting required
                     len = 32;
                     view.setUint32(byteOffset, val);
+                    break;
+                case 'u48':
+                    if (!['number', 'bigint'].includes(typeof val)) throw Error(`Token value mismatch ${type} vs ${typeof val}`);
+                    // Currently all u48 values are byte aligned, no shifting required
+                    len = 48;
+                    view.setUint16(byteOffset, Number(BigInt(val as number) >> 32n));
+                    view.setUint32(byteOffset+2, Number(BigInt(val as number) & 0xFFFFFFFFn));
                     break;
                 case 'u3':
                     // Only used by header Z field, no-op

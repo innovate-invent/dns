@@ -1,0 +1,91 @@
+#{{! RuleTypes =
+#ServerBlocks: Array
+#ServerBlock: Object
+#ZoneNames: Array
+#ZoneName: Object
+#DomainName: Array
+#DomainLabel: String
+#//Comment: String
+#Port: Number
+#//Plugin: Array
+#UNKNOWNPLUGIN: String
+#bind: Object
+#file: Object
+#FilePath: String
+#template: Object
+#rrClass: String
+#rrType: String
+#match: String
+#rdata: String
+#answer: Array
+#additional: Array
+#authority: Array
+#rcode: String
+#ederror: String
+#fallthrough: String
+#header: Object
+#header-direction: String
+#header-op: String
+#header-field: String
+#action: String
+#IPv6address: String
+#IPv4address: String
+# ~}}
+
+ServerBlocks = *(ServerBlock / EOL)
+ServerBlock = ZoneNames SEP "{" 1*EOL (*Plugin / WS) "}" EOL
+ZoneNames = ZoneName *(SEP ZoneName)
+ZoneName = DomainName [":" Port]
+DomainName = DomainLabel *( "." DomainLabel) ["."]
+DomainLabel = 1*domain-char
+Comment = "#" *(%d9 / %d11-255)
+Port = 1*digit
+
+Plugin = WS ( bind / file / header / template / UNKNOWNPLUGIN ) EOL
+UNKNOWNPLUGIN = WS 1*alpha [ SEP ( "{" SEP "}" / "{" 1*EOL *( *NotCloseBlock EOL ) WS "}" / *AnyChar ) ]
+bind = WS "bind" SEP ( IPv4address / IPv6address )
+file = WS "file" SEP FilePath [SEP DomainName]
+FilePath = 1*NotSep
+
+template = WS "template" SEP rrClass SEP rrType SEP DomainName SEP "{" EOL *( match / answer / additional / authority / rcode- / ederror- / fallthrough / EOL ) WS "}"
+rrClass = "IN" / "CH"
+rrType = *alpha
+match = WS "match" SEP *AnyChar EOL
+tmpl = SEP %d34 rdata %d34 EOL
+rdata = *NotQuote
+answer = WS "answer" tmpl
+additional = WS "additional" tmpl
+authority = WS "authority" tmpl
+rcode- = WS "rcode" SEP rcode EOL
+rcode = 1*alpha
+ederror- = WS "ederror" SEP ederror EOL
+ederror = *AnyChar
+fallthrough = WS "fallthrough" [ SEP DomainName ] EOL
+
+header = WS "header" SEP "{" EOL *( WS header-direction SEP header-op SEP header-field EOL / EOL ) WS "}"
+header-direction = [ "query" / "response" ]
+header-op = "set" / "clear"
+header-field = 1*3( "aa" / "ra" / "rd" )
+
+
+domain-char = alpha / digit / "-"
+alpha           = %d65-90 / %d97-122
+digit             = %d48-57
+SEP = 1*" "
+LF = %d10
+EOL = *" " [Comment] LF
+WS = *(SEP / LF)
+AnyChar = %d9 / %d11-34 / %d36-255 ; all except LF and "#"
+NotSep = %d9 / %d11-31 / %d33-34 / %d36-255 ; all except LF, " " and "#"
+NotQuote = %d9 / %d11-32 / %d35-255
+NotCloseBlock = %d9 / %d11-124 / %d126-255
+
+; https://www.rfc-editor.org/rfc/rfc2373#page-22
+IPv6address = hexpart [ ":" IPv4address ]
+IPv4address = 1*3digit "." 1*3digit "." 1*3digit "." 1*3digit
+IPv6prefix  = hexpart "/" 1*2digit
+hexpart = hexseq / ( hexseq "::" [ hexseq ] ) / ( "::" [ hexseq ] )
+hexseq  = hex4 *( ":" hex4)
+hex4    = 1*4hex
+hex = digit / "a" / "b" / "c" / "d" / "e" / "f"
+

@@ -1,0 +1,17 @@
+$ORIGIN dnssec-alg$ALG.xa.                              ; Must end with "."
+$TTL 3600
+
+@       SOA     ns1 admin. (
+                2024052020      ; serial
+                6h              ; refresh
+                1h              ; retry
+                1w              ; expire
+                1d )            ; minimum
+
+		NS	ns1
+
+ns1		A	127.4.0.$ALG
+ns1		AAAA	fda1:b2:c3:0:127:4:0:$ALG
+
+$INCLUDE dnssec-alg$ALG.xa.zsk.key
+$INCLUDE dnssec-alg$ALG.xa.ksk.key
